@@ -177,6 +177,7 @@ export default function ProjectDetailScreen() {
           {/* Action Buttons */}
           <View style={{ gap: 12, marginBottom: 24 }}>
             <TouchableOpacity
+              onPress={() => router.push(`../processing-monitor?projectId=${id}`)}
               style={{
                 backgroundColor: colors.primary,
                 borderRadius: 12,
@@ -187,12 +188,13 @@ export default function ProjectDetailScreen() {
                 gap: 8,
               }}
             >
-              <MaterialIcons name="visibility" size={20} color="#FFFFFF" />
+              <MaterialIcons name="play-circle" size={20} color="#FFFFFF" />
               <Text style={{ fontSize: 16, fontWeight: "600", color: "#FFFFFF" }}>
-                查看结果
+                处理监控
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
+              onPress={() => router.push(`../results-viewer?projectId=${id}`)}
               style={{
                 backgroundColor: colors.surface,
                 borderRadius: 12,
@@ -205,9 +207,9 @@ export default function ProjectDetailScreen() {
                 borderColor: colors.border,
               }}
             >
-              <MaterialIcons name="download" size={20} color={colors.primary} />
+              <MaterialIcons name="image" size={20} color={colors.primary} />
               <Text style={{ fontSize: 16, fontWeight: "600", color: colors.primary }}>
-                导出数据
+                查看结果
               </Text>
             </TouchableOpacity>
           </View>

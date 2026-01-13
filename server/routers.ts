@@ -4,6 +4,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import * as db from "./db";
+import { startProjectProcessing, getTaskStatus } from "./task-queue";
 
 export const appRouter = router({
   system: systemRouter,
@@ -69,6 +70,45 @@ export const appRouter = router({
     getLogs: protectedProcedure
       .input(z.object({ projectId: z.number(), limit: z.number().optional() }))
       .query(({ input }) => db.getProjectLogs(input.projectId, input.limit)),
+    startProcessing: protectedProcedure
+      .input(z.object({
+        projectId: z.number(),
+        startDate: z.string(),
+        endDate: z.string(),
+        satellite: z.string(),
+        orbitDirection: z.enum(["ascending", "descending"]),
+        polarization: z.string(),
+        coherenceThreshold: z.number().optional(),
+        outputResolution: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        await db.updateProject(input.projectId, { status: "processing", progress: 0 });
+        const taskId = await startProjectProcessing(input.projectId, {
+          projectId: input.projectId,
+          startDate: input.startDate,
+          endDate: input.endDate,
+          satellite: input.satellite,
+          orbitDirection: input.orbitDirection,
+          polarization: input.polarization,
+          coherenceThreshold: input.coherenceThreshold || 0.4,
+          outputResolution: input.outputResolution || 30,
+        });
+        return { success: true, taskId };
+      }),
+    getTaskStatus: protectedProcedure
+      .input(z.object({ taskId: z.string() }))
+      .query(({ input }) => getTaskStatus(input.taskId) || { error: "Task not found" }),
+    cancelProcessing: protectedProcedure
+      .input(z.object({ projectId: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.updateProject(input.projectId, { status: "failed" });
+        await db.addProcessingLog({
+          projectId: input.projectId,
+          logLevel: "warning",
+          message: "Processing cancelled by user",
+        });
+        return { success: true };
+      }),
   }),
 });
 
