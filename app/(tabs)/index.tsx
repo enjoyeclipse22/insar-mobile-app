@@ -1,44 +1,316 @@
-import { ScrollView, Text, View, TouchableOpacity } from "react-native";
-
+import { ScrollView, Text, View, TouchableOpacity, FlatList } from "react-native";
+import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
+import { useColors } from "@/hooks/use-colors";
+import { useState, useEffect } from "react";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 
-/**
- * Home Screen - NativeWind Example
- *
- * This template uses NativeWind (Tailwind CSS for React Native).
- * You can use familiar Tailwind classes directly in className props.
- *
- * Key patterns:
- * - Use `className` instead of `style` for most styling
- * - Theme colors: use tokens directly (bg-background, text-foreground, bg-primary, etc.); no dark: prefix needed
- * - Responsive: standard Tailwind breakpoints work on web
- * - Custom colors defined in tailwind.config.js
- */
+interface Project {
+  id: string;
+  name: string;
+  location: string;
+  status: "processing" | "completed" | "failed";
+  createdAt: string;
+  progress: number;
+}
+
 export default function HomeScreen() {
+  const router = useRouter();
+  const colors = useColors();
+  const [recentProjects, setRecentProjects] = useState<Project[]>([
+    {
+      id: "1",
+      name: "Turkey Earthquake 2023",
+      location: "Central Turkey",
+      status: "completed",
+      createdAt: "2024-01-10",
+      progress: 100,
+    },
+    {
+      id: "2",
+      name: "Volcano Monitoring",
+      location: "Ecuador",
+      status: "processing",
+      createdAt: "2024-01-12",
+      progress: 65,
+    },
+  ]);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "completed":
+        return colors.success;
+      case "processing":
+        return colors.primary;
+      case "failed":
+        return colors.error;
+      default:
+        return colors.muted;
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "completed":
+        return "check-circle";
+      case "processing":
+        return "hourglass-empty";
+      case "failed":
+        return "error";
+      default:
+        return "help";
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case "completed":
+        return "已完成";
+      case "processing":
+        return "处理中";
+      case "failed":
+        return "失败";
+      default:
+        return "未知";
+    }
+  };
+
+  const renderProjectCard = (project: Project) => (
+    <TouchableOpacity
+      key={project.id}
+      onPress={() => router.push(`/project/${project.id}`)}
+      style={{
+        backgroundColor: colors.surface,
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderLeftWidth: 4,
+        borderLeftColor: getStatusColor(project.status),
+      }}
+    >
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground, marginBottom: 4 }}>
+            {project.name}
+          </Text>
+          <Text style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
+            📍 {project.location}
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <MaterialIcons name={getStatusIcon(project.status)} size={14} color={getStatusColor(project.status)} />
+            <Text style={{ fontSize: 12, color: getStatusColor(project.status) }}>
+              {getStatusText(project.status)}
+            </Text>
+          </View>
+        </View>
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+            {project.createdAt}
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "600", color: colors.primary }}>
+            {project.progress}%
+          </Text>
+        </View>
+      </View>
+      {project.status === "processing" && (
+        <View style={{ marginTop: 12, height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: "hidden" }}>
+          <View
+            style={{
+              height: "100%",
+              width: `${project.progress}%`,
+              backgroundColor: colors.primary,
+              borderRadius: 2,
+            }}
+          />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
   return (
-    <ScreenContainer className="p-6">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        <View className="flex-1 gap-8">
-          {/* Hero Section */}
-          <View className="items-center gap-2">
-            <Text className="text-4xl font-bold text-foreground">Welcome</Text>
-            <Text className="text-base text-muted text-center">
-              Edit app/(tabs)/index.tsx to get started
+    <ScreenContainer className="p-0">
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }} style={{ backgroundColor: colors.background }}>
+        {/* Hero Section */}
+        <View
+          style={{
+            backgroundColor: colors.primary,
+            paddingHorizontal: 24,
+            paddingVertical: 32,
+            paddingTop: 24,
+          }}
+        >
+          <Text style={{ fontSize: 28, fontWeight: "700", color: "#FFFFFF", marginBottom: 8 }}>
+            InSAR Pro
+          </Text>
+          <Text style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", marginBottom: 16 }}>
+            干涉合成孔径雷达数据处理平台
+          </Text>
+
+          {/* Quick Stats */}
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(255,255,255,0.15)",
+                borderRadius: 8,
+                padding: 12,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
+                {recentProjects.length}
+              </Text>
+              <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 4 }}>
+                项目总数
+              </Text>
+            </View>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(255,255,255,0.15)",
+                borderRadius: 8,
+                padding: 12,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
+                {recentProjects.filter((p) => p.status === "completed").length}
+              </Text>
+              <Text style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", marginTop: 4 }}>
+                已完成
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Main Content */}
+        <View style={{ paddingHorizontal: 24, paddingVertical: 24 }}>
+          {/* New Project Button */}
+          <TouchableOpacity
+            onPress={() => router.push("../create-project")}
+            style={{
+              backgroundColor: colors.primary,
+              borderRadius: 12,
+              padding: 16,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              marginBottom: 24,
+            }}
+          >
+            <MaterialIcons name="add" size={24} color="#FFFFFF" />
+            <Text style={{ fontSize: 16, fontWeight: "600", color: "#FFFFFF" }}>
+              新建项目
             </Text>
+          </TouchableOpacity>
+
+          {/* Recent Projects */}
+          <View style={{ marginBottom: 24 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.foreground }}>
+                最近项目
+              </Text>
+              <TouchableOpacity onPress={() => router.push("../projects")}>
+                <Text style={{ fontSize: 14, color: colors.primary, fontWeight: "500" }}>
+                  查看全部 →
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {recentProjects.length > 0 ? (
+              recentProjects.slice(0, 3).map(renderProjectCard)
+            ) : (
+              <View
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 12,
+                  padding: 24,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <MaterialIcons name="inbox" size={40} color={colors.muted} />
+                <Text style={{ fontSize: 14, color: colors.muted, marginTop: 8 }}>
+                  暂无项目
+                </Text>
+              </View>
+            )}
           </View>
 
-          {/* Example Card */}
-          <View className="w-full max-w-sm self-center bg-surface rounded-2xl p-6 shadow-sm border border-border">
-            <Text className="text-lg font-semibold text-foreground mb-2">NativeWind Ready</Text>
-            <Text className="text-sm text-muted leading-relaxed">
-              Use Tailwind CSS classes directly in your React Native components.
+          {/* Quick Links */}
+          <View style={{ gap: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground, marginBottom: 4 }}>
+              快速操作
             </Text>
-          </View>
+            <TouchableOpacity
+              style={{
+                backgroundColor: colors.surface,
+                borderRadius: 12,
+                padding: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    backgroundColor: colors.primary,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <MaterialIcons name="storage" size={20} color="#FFFFFF" />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>
+                    数据管理
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.muted }}>
+                    管理存储空间
+                  </Text>
+                </View>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color={colors.muted} />
+            </TouchableOpacity>
 
-          {/* Example Button */}
-          <View className="items-center">
-            <TouchableOpacity className="bg-primary px-6 py-3 rounded-full active:opacity-80">
-              <Text className="text-background font-semibold">Get Started</Text>
+            <TouchableOpacity
+              onPress={() => router.push("/settings")}
+              style={{
+                backgroundColor: colors.surface,
+                borderRadius: 12,
+                padding: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <View
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    backgroundColor: colors.primary,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <MaterialIcons name="settings" size={20} color="#FFFFFF" />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>
+                    设置
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.muted }}>
+                    应用配置和偏好
+                  </Text>
+                </View>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color={colors.muted} />
             </TouchableOpacity>
           </View>
         </View>

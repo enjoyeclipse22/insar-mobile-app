@@ -89,4 +89,126 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+/**
+ * InSAR Project queries
+ */
+
+export async function getUserProjects(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const { desc } = await import("drizzle-orm");
+  return db
+    .select()
+    .from(insarProjects)
+    .where(eq(insarProjects.userId, userId))
+    .orderBy(desc(insarProjects.createdAt));
+}
+
+export async function getProjectById(projectId: number) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const result = await db.select().from(insarProjects).where(eq(insarProjects.id, projectId));
+  return result[0] || null;
+}
+
+export async function createProject(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(insarProjects).values(data);
+  return data.id || null;
+}
+
+export async function updateProject(projectId: number, data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(insarProjects).set(data).where(eq(insarProjects.id, projectId));
+}
+
+export async function deleteProject(projectId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.delete(insarProjects).where(eq(insarProjects.id, projectId));
+}
+
+/**
+ * Processing Steps queries
+ */
+
+export async function getProjectSteps(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(processingSteps).where(eq(processingSteps.projectId, projectId));
+}
+
+export async function createProcessingStep(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(processingSteps).values(data);
+  return data.id || null;
+}
+
+export async function updateProcessingStep(stepId: number, data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(processingSteps).set(data).where(eq(processingSteps.id, stepId));
+}
+
+/**
+ * Processing Results queries
+ */
+
+export async function getProjectResults(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db.select().from(processingResults).where(eq(processingResults.projectId, projectId));
+}
+
+export async function createProcessingResult(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(processingResults).values(data);
+  return data.id || null;
+}
+
+/**
+ * Processing Logs queries
+ */
+
+export async function getProjectLogs(projectId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const { desc } = await import("drizzle-orm");
+  return db
+    .select()
+    .from(processingLogs)
+    .where(eq(processingLogs.projectId, projectId))
+    .orderBy(desc(processingLogs.timestamp))
+    .limit(limit);
+}
+
+export async function addProcessingLog(data: any) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(processingLogs).values(data);
+  return data.id || null;
+}
+
+// Import InSAR tables
+import {
+  insarProjects,
+  processingSteps,
+  processingResults,
+  processingLogs,
+} from "../drizzle/schema";
