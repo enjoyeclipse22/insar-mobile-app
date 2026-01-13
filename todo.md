@@ -167,3 +167,38 @@
 - [ ] 集成测试（前后端通信）
 - [ ] 性能优化
 - [ ] 错误处理和日志记录
+
+
+## 第 3 阶段：MintPy 真实算法集成
+
+### Python 后端服务
+- [x] 创建 Python FastAPI 服务框架
+- [x] 安装基础依赖库（numpy、scipy、gdal、rasterio）
+- [x] 实现 Sentinel-1 数据下载接口（ASF API 查询）
+- [x] 实现 DEM 获取（SRTM/ASTER）
+- [x] 实现轨道数据下载模块
+- [x] 实现 SLC 配准算法框架
+- [x] 实现干涉图生成算法
+- [x] 实现相位解缠（MCF 算法）
+- [x] 实现形变反演（最小二乘法）
+- [x] 设置 HTTP REST 通信接口
+- [ ] 集成真实 MintPy 库（可选）
+
+### Node.js 集成
+- [x] 创建 Python 客户端（PythonBackendClient）
+- [x] 实现 Node.js 与 Python 的 HTTP 通信
+- [x] 添加任务状态轮询機制
+- [x] 实现错误处理和重试机制
+- [x] 添加数据验证和格式转换
+
+### 数据处理
+- [x] 实现 GeoTIFF 读写
+- [x] 实现复数数据处理
+- [x] 实现栅格数据可视化
+- [x] 添加结果导出功能
+
+### 测试
+- [x] 单元测试（Python 处理函数）- 5 个测试通过
+- [x] 集成测试（Node.js-Python 通信）- 12 个测试通过
+- [ ] 端到端测试（完整处理流程）
+- [ ] 性能基准测试
