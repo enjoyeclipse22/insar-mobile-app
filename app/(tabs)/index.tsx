@@ -243,6 +243,7 @@ export default function HomeScreen() {
               快速操作
             </Text>
             <TouchableOpacity
+              onPress={() => router.push("/data-manager")}
               style={{
                 backgroundColor: colors.surface,
                 borderRadius: 12,
@@ -250,6 +251,7 @@ export default function HomeScreen() {
                 flexDirection: "row",
                 alignItems: "center",
                 justifyContent: "space-between",
+                marginBottom: 12,
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
