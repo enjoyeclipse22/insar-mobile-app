@@ -5,9 +5,11 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import * as db from "./db";
 import { startProjectProcessing, getTaskStatus } from "./task-queue";
+import { realInsarRouter } from "./real-insar-routes";
 
 export const appRouter = router({
   system: systemRouter,
+  realInsar: realInsarRouter,
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
