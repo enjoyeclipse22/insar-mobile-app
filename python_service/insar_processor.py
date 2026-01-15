@@ -1,5 +1,5 @@
 """
-InSAR Processing Engine
+InSAR Processing Engine - Updated with Atmospheric Correction
 Main orchestrator for InSAR processing workflow
 """
 
@@ -30,6 +30,7 @@ class InSARProcessingEngine:
             "coregistration",
             "interferogram_generation",
             "phase_unwrapping",
+            "atmospheric_correction",
             "deformation_inversion"
         ]
         
@@ -90,6 +91,12 @@ class InSARProcessingEngine:
                 "description": "Unwrapping interferometric phase using MCF algorithm",
                 "inputs": ["Interferogram"],
                 "outputs": ["Unwrapped phase"]
+            },
+            "atmospheric_correction": {
+                "name": "Atmospheric Correction",
+                "description": "Estimating and removing atmospheric phase delays using DEM-based methods",
+                "inputs": ["Interferogram", "DEM"],
+                "outputs": ["Corrected interferogram", "APS estimates"]
             },
             "deformation_inversion": {
                 "name": "Deformation Inversion",
