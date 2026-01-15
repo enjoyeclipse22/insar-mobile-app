@@ -5,6 +5,7 @@ import { useColors } from "@/hooks/use-colors";
 import { useState, useCallback } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { trpc } from "@/lib/trpc";
+import { RealMapSelector } from "@/components/real-map-selector";
 
 // 地图区域选择组件
 function MapAreaSelector({
@@ -390,7 +391,7 @@ export default function CreateProjectScreen() {
               <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground, marginBottom: 8 }}>
                 选择处理区域
               </Text>
-              <MapAreaSelector bounds={bounds} onBoundsChange={setBounds} colors={colors} />
+              <RealMapSelector bounds={bounds} onBoundsChange={setBounds} />
             </View>
           </View>
         );

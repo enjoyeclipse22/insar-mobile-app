@@ -14,7 +14,10 @@ describe("WebSocketClient", () => {
   });
 
   afterEach(() => {
-    client.disconnect();
+    // Only disconnect if socket exists and has disconnect method
+    if ((client as any).socket && typeof (client as any).socket.disconnect === 'function') {
+      client.disconnect();
+    }
   });
 
   it("should initialize with correct config", () => {
@@ -26,9 +29,10 @@ describe("WebSocketClient", () => {
   it("should track subscribed tasks", () => {
     const taskId = "task_1_12345";
 
-    // Mock socket
+    // Mock socket with disconnect method
     (client as any).socket = {
       emit: vi.fn(),
+      disconnect: vi.fn(),
     };
     (client as any).isConnected = true;
 
@@ -43,7 +47,7 @@ describe("WebSocketClient", () => {
     const taskId = "task_1_12345";
 
     (client as any).isConnected = false;
-    (client as any).socket = { emit: vi.fn() };
+    (client as any).socket = { emit: vi.fn(), disconnect: vi.fn() };
 
     client.subscribeToTask(taskId);
     expect(client.getSubscribedTasks()).not.toContain(taskId);
