@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions, Modal } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions, Modal, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { useColors } from "@/hooks/use-colors";
 
@@ -8,6 +8,20 @@ interface Bounds {
   south: number;
   east: number;
   west: number;
+}
+
+interface Marker {
+  id: string;
+  lat: number;
+  lon: number;
+  label?: string;
+}
+
+interface SearchResult {
+  display_name: string;
+  lat: string;
+  lon: string;
+  boundingbox: [string, string, string, string];
 }
 
 interface RealMapSelectorProps {
@@ -39,14 +53,12 @@ const mapLayers: Record<MapLayerType, { name: string; getTileUrl: (x: number, y:
   satellite: {
     name: "卫星",
     getTileUrl: (x, y, z) => {
-      // 使用 ESRI World Imagery 卫星图
       return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
     },
   },
   terrain: {
     name: "地形",
     getTileUrl: (x, y, z) => {
-      // 使用 OpenTopoMap 地形图
       const servers = ['a', 'b', 'c'];
       const server = servers[(x + y) % servers.length];
       return `https://${server}.tile.opentopomap.org/${z}/${x}/${y}.png`;
@@ -74,24 +86,17 @@ function tileToLonLat(x: number, y: number, zoom: number): { lon: number; lat: n
 
 // 计算比例尺
 function getScaleInfo(lat: number, zoom: number): { distance: number; unit: string; width: number } {
-  // 地球周长（米）
   const earthCircumference = 40075016.686;
-  // 在当前纬度和缩放级别下，每像素代表的米数
   const metersPerPixel = (earthCircumference * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
-  
-  // 目标比例尺宽度（像素）
   const targetWidth = 100;
-  // 计算目标宽度对应的实际距离
   let distance = metersPerPixel * targetWidth;
   let unit = "m";
   
-  // 转换为合适的单位
   if (distance >= 1000) {
     distance = distance / 1000;
     unit = "km";
   }
   
-  // 取整到合适的数值
   const niceNumbers = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
   let niceDistance = niceNumbers[0];
   for (const n of niceNumbers) {
@@ -100,7 +105,6 @@ function getScaleInfo(lat: number, zoom: number): { distance: number; unit: stri
     }
   }
   
-  // 计算实际宽度
   const actualWidth = (niceDistance * (unit === "km" ? 1000 : 1)) / metersPerPixel;
   
   return { distance: niceDistance, unit, width: actualWidth };
@@ -122,6 +126,26 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
   const [showGoToModal, setShowGoToModal] = useState(false);
   const [goToLat, setGoToLat] = useState("");
   const [goToLon, setGoToLon] = useState("");
+  
+  // 搜索相关状态
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  
+  // 标注点相关状态
+  const [markers, setMarkers] = useState<Marker[]>([]);
+  const [showAddMarkerModal, setShowAddMarkerModal] = useState(false);
+  const [newMarkerLat, setNewMarkerLat] = useState("");
+  const [newMarkerLon, setNewMarkerLon] = useState("");
+  const [newMarkerLabel, setNewMarkerLabel] = useState("");
+  
+  // 手势相关状态
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number; lat: number; lon: number } | null>(null);
+  const [touchCount, setTouchCount] = useState(0);
+  const [initialPinchDistance, setInitialPinchDistance] = useState<number | null>(null);
+  const [initialZoom, setInitialZoom] = useState(5);
 
   // 更新中心点当边界变化时
   useEffect(() => {
@@ -130,6 +154,90 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
       lon: (bounds.east + bounds.west) / 2,
     });
   }, [bounds]);
+
+  // 搜索地名
+  const searchPlace = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    
+    setIsSearching(true);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`,
+        {
+          headers: {
+            "User-Agent": "InSAR-Pro-Mobile/1.0",
+          },
+        }
+      );
+      const data = await response.json();
+      setSearchResults(data);
+      setShowSearchResults(true);
+    } catch (error) {
+      console.error("Search error:", error);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  // 防抖搜索
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      searchPlace(text);
+    }, 500);
+  }, [searchPlace]);
+
+  // 选择搜索结果
+  const selectSearchResult = useCallback((result: SearchResult) => {
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    setCenter({ lat, lon });
+    
+    // 如果有边界框，设置边界
+    if (result.boundingbox) {
+      const [south, north, west, east] = result.boundingbox.map(parseFloat);
+      onBoundsChange({ north, south, east, west });
+    }
+    
+    setSearchQuery(result.display_name.split(",")[0]);
+    setShowSearchResults(false);
+    setZoom(10);
+  }, [onBoundsChange]);
+
+  // 添加标注点
+  const addMarker = useCallback(() => {
+    const lat = parseFloat(newMarkerLat);
+    const lon = parseFloat(newMarkerLon);
+    if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+      const newMarker: Marker = {
+        id: Date.now().toString(),
+        lat,
+        lon,
+        label: newMarkerLabel || `标注 ${markers.length + 1}`,
+      };
+      setMarkers([...markers, newMarker]);
+      setShowAddMarkerModal(false);
+      setNewMarkerLat("");
+      setNewMarkerLon("");
+      setNewMarkerLabel("");
+      // 跳转到标注点位置
+      setCenter({ lat, lon });
+    }
+  }, [newMarkerLat, newMarkerLon, newMarkerLabel, markers]);
+
+  // 删除标注点
+  const removeMarker = useCallback((id: string) => {
+    setMarkers(markers.filter(m => m.id !== id));
+  }, [markers]);
 
   // 获取当前图层的瓦片 URL
   const getTileUrl = useCallback((x: number, y: number, z: number) => {
@@ -141,17 +249,13 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     const tiles: Array<{ x: number; y: number; url: string; left: number; top: number }> = [];
     const tileSize = 256;
     
-    // 计算中心瓦片
     const centerTile = lonLatToTile(center.lon, center.lat, zoom);
-    
-    // 计算需要多少瓦片来覆盖地图区域
     const tilesX = Math.ceil(mapSize.width / tileSize) + 2;
     const tilesY = Math.ceil(mapSize.height / tileSize) + 2;
     
     const startX = centerTile.x - Math.floor(tilesX / 2);
     const startY = centerTile.y - Math.floor(tilesY / 2);
     
-    // 计算中心瓦片在屏幕上的位置偏移
     const n = Math.pow(2, zoom);
     const centerPixelX = ((center.lon + 180) / 360) * n * tileSize;
     const latRad = (center.lat * Math.PI) / 180;
@@ -165,7 +269,6 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
         const tileX = startX + dx;
         const tileY = startY + dy;
         
-        // 确保瓦片坐标在有效范围内
         if (tileX >= 0 && tileX < n && tileY >= 0 && tileY < n) {
           tiles.push({
             x: tileX,
@@ -186,16 +289,13 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     const tileSize = 256;
     const n = Math.pow(2, zoom);
     
-    // 计算中心点的像素坐标
     const centerPixelX = ((center.lon + 180) / 360) * n * tileSize;
     const latRad = (center.lat * Math.PI) / 180;
     const centerPixelY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n * tileSize;
     
-    // 计算点击位置的全局像素坐标
     const globalX = centerPixelX + (px - mapSize.width / 2);
     const globalY = centerPixelY + (py - mapSize.height / 2);
     
-    // 转换为经纬度
     const lon = (globalX / (n * tileSize)) * 360 - 180;
     const latRadResult = Math.atan(Math.sinh(Math.PI * (1 - (2 * globalY) / (n * tileSize))));
     const lat = (latRadResult * 180) / Math.PI;
@@ -208,17 +308,14 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     const tileSize = 256;
     const n = Math.pow(2, zoom);
     
-    // 计算中心点的像素坐标
     const centerPixelX = ((center.lon + 180) / 360) * n * tileSize;
     const latRad = (center.lat * Math.PI) / 180;
     const centerPixelY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n * tileSize;
     
-    // 计算目标点的全局像素坐标
     const targetPixelX = ((lon + 180) / 360) * n * tileSize;
     const targetLatRad = (lat * Math.PI) / 180;
     const targetPixelY = (1 - Math.log(Math.tan(targetLatRad) + 1 / Math.cos(targetLatRad)) / Math.PI) / 2 * n * tileSize;
     
-    // 转换为相对于地图容器的坐标
     const x = mapSize.width / 2 + (targetPixelX - centerPixelX);
     const y = mapSize.height / 2 + (targetPixelY - centerPixelY);
     
@@ -238,49 +335,129 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     };
   }, [bounds, lonLatToPixel]);
 
+  // 计算两点之间的距离
+  const getDistance = (touches: any[]): number => {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].pageX - touches[1].pageX;
+    const dy = touches[0].pageY - touches[1].pageY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
   // 处理触摸开始
   const handleTouchStart = useCallback((event: any) => {
+    const touches = event.nativeEvent.touches;
+    setTouchCount(touches.length);
+    
+    if (touches.length === 2) {
+      // 双指缩放开始
+      const distance = getDistance(touches);
+      setInitialPinchDistance(distance);
+      setInitialZoom(zoom);
+      setIsPanning(false);
+      setIsSelecting(false);
+    } else if (touches.length === 1) {
+      const { locationX, locationY } = event.nativeEvent;
+      // 单指操作 - 先判断是平移还是选择
+      setPanStart({ x: locationX, y: locationY, lat: center.lat, lon: center.lon });
+      setIsPanning(true);
+    }
+  }, [zoom, center]);
+
+  // 处理触摸移动
+  const handleTouchMove = useCallback((event: any) => {
+    const touches = event.nativeEvent.touches;
+    
+    if (touches.length === 2 && initialPinchDistance) {
+      // 双指缩放
+      const currentDistance = getDistance(touches);
+      const scale = currentDistance / initialPinchDistance;
+      const newZoom = Math.round(initialZoom + Math.log2(scale));
+      setZoom(Math.max(1, Math.min(18, newZoom)));
+    } else if (touches.length === 1 && isPanning && panStart) {
+      // 单指平移
+      const { locationX, locationY } = event.nativeEvent;
+      const dx = locationX - panStart.x;
+      const dy = locationY - panStart.y;
+      
+      // 如果移动距离较小，可能是选择操作
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        return;
+      }
+      
+      // 计算新的中心点
+      const tileSize = 256;
+      const n = Math.pow(2, zoom);
+      const metersPerPixel = (40075016.686 * Math.cos((panStart.lat * Math.PI) / 180)) / (n * tileSize);
+      
+      // 转换像素偏移为经纬度偏移
+      const lonOffset = -dx / (n * tileSize) * 360;
+      const latOffset = dy / (n * tileSize) * 180 * 2;
+      
+      const newLon = Math.max(-180, Math.min(180, panStart.lon + lonOffset));
+      const newLat = Math.max(-85, Math.min(85, panStart.lat + latOffset));
+      
+      setCenter({ lat: newLat, lon: newLon });
+    } else if (isSelecting && selectionStart) {
+      const { locationX, locationY } = event.nativeEvent;
+      setSelectionEnd({ x: locationX, y: locationY });
+    }
+  }, [initialPinchDistance, initialZoom, isPanning, panStart, zoom, isSelecting, selectionStart]);
+
+  // 处理触摸结束
+  const handleTouchEnd = useCallback((event: any) => {
+    const touches = event.nativeEvent.touches;
+    
+    if (touchCount === 2) {
+      // 双指缩放结束
+      setInitialPinchDistance(null);
+    }
+    
+    if (isPanning && panStart) {
+      const { locationX, locationY } = event.nativeEvent;
+      const dx = locationX - panStart.x;
+      const dy = locationY - panStart.y;
+      
+      // 如果移动距离很小，视为点击开始选择
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+        setIsSelecting(true);
+        setSelectionStart({ x: locationX, y: locationY });
+        setSelectionEnd({ x: locationX, y: locationY });
+      }
+    }
+    
+    if (isSelecting && selectionStart && selectionEnd) {
+      const start = pixelToLonLat(selectionStart.x, selectionStart.y);
+      const end = pixelToLonLat(selectionEnd.x, selectionEnd.y);
+
+      const newBounds = {
+        north: Math.max(start.lat, end.lat),
+        south: Math.min(start.lat, end.lat),
+        east: Math.max(start.lon, end.lon),
+        west: Math.min(start.lon, end.lon),
+      };
+
+      if (Math.abs(newBounds.north - newBounds.south) > 0.1 && 
+          Math.abs(newBounds.east - newBounds.west) > 0.1) {
+        onBoundsChange(newBounds);
+      }
+    }
+
+    setIsPanning(false);
+    setIsSelecting(false);
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    setPanStart(null);
+    setTouchCount(0);
+  }, [touchCount, isPanning, panStart, isSelecting, selectionStart, selectionEnd, pixelToLonLat, onBoundsChange]);
+
+  // 长按开始选择区域
+  const handleLongPress = useCallback((event: any) => {
     const { locationX, locationY } = event.nativeEvent;
+    setIsPanning(false);
     setIsSelecting(true);
     setSelectionStart({ x: locationX, y: locationY });
     setSelectionEnd({ x: locationX, y: locationY });
   }, []);
-
-  // 处理触摸移动
-  const handleTouchMove = useCallback((event: any) => {
-    if (!isSelecting) return;
-    const { locationX, locationY } = event.nativeEvent;
-    setSelectionEnd({ x: locationX, y: locationY });
-  }, [isSelecting]);
-
-  // 处理触摸结束
-  const handleTouchEnd = useCallback(() => {
-    if (!isSelecting || !selectionStart || !selectionEnd) {
-      setIsSelecting(false);
-      return;
-    }
-
-    // 计算选中区域的经纬度
-    const start = pixelToLonLat(selectionStart.x, selectionStart.y);
-    const end = pixelToLonLat(selectionEnd.x, selectionEnd.y);
-
-    const newBounds = {
-      north: Math.max(start.lat, end.lat),
-      south: Math.min(start.lat, end.lat),
-      east: Math.max(start.lon, end.lon),
-      west: Math.min(start.lon, end.lon),
-    };
-
-    // 只有当选择区域足够大时才更新
-    if (Math.abs(newBounds.north - newBounds.south) > 0.1 && 
-        Math.abs(newBounds.east - newBounds.west) > 0.1) {
-      onBoundsChange(newBounds);
-    }
-
-    setIsSelecting(false);
-    setSelectionStart(null);
-    setSelectionEnd(null);
-  }, [isSelecting, selectionStart, selectionEnd, pixelToLonLat, onBoundsChange]);
 
   // 缩放控制
   const handleZoomIn = () => setZoom((z) => Math.min(18, z + 1));
@@ -312,6 +489,71 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
 
   return (
     <View>
+      {/* 搜索框 */}
+      <View style={{ marginBottom: 12 }}>
+        <View style={{ position: "relative" }}>
+          <TextInput
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            placeholder="🔍 搜索地名..."
+            placeholderTextColor={colors.muted}
+            style={{
+              backgroundColor: colors.surface,
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              fontSize: 14,
+              color: colors.foreground,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+            returnKeyType="search"
+            onSubmitEditing={() => searchPlace(searchQuery)}
+          />
+          {isSearching && (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={{ position: "absolute", right: 12, top: 12 }}
+            />
+          )}
+        </View>
+        
+        {/* 搜索结果 */}
+        {showSearchResults && searchResults.length > 0 && (
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: colors.border,
+              marginTop: 4,
+              maxHeight: 200,
+              overflow: "hidden",
+            }}
+          >
+            <ScrollView>
+              {searchResults.map((result, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => selectSearchResult(result)}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    borderBottomWidth: index < searchResults.length - 1 ? 1 : 0,
+                    borderBottomColor: colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: colors.foreground }} numberOfLines={2}>
+                    {result.display_name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+
       {/* 预设区域快速选择 */}
       <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
         快速选择预设区域：
@@ -343,7 +585,7 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
       {/* 真实地图 */}
       <View
         style={{
-          height: 250,
+          height: 280,
           borderRadius: 12,
           overflow: "hidden",
           position: "relative",
@@ -405,6 +647,41 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
             }}
           />
         )}
+
+        {/* 标注点 */}
+        {markers.map((marker) => {
+          const pos = lonLatToPixel(marker.lon, marker.lat);
+          if (pos.x < -20 || pos.x > mapSize.width + 20 || pos.y < -20 || pos.y > mapSize.height + 20) {
+            return null;
+          }
+          return (
+            <TouchableOpacity
+              key={marker.id}
+              onLongPress={() => removeMarker(marker.id)}
+              style={{
+                position: "absolute",
+                left: pos.x - 12,
+                top: pos.y - 24,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ fontSize: 24 }}>📍</Text>
+              {marker.label && (
+                <View
+                  style={{
+                    backgroundColor: "rgba(0,0,0,0.7)",
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 4,
+                    marginTop: -4,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, color: "#fff" }}>{marker.label}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })}
 
         {/* 指北针 */}
         <View
@@ -504,6 +781,23 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
             }}
           >
             <Text style={{ fontSize: 10, color: "#333" }}>📍 定位</Text>
+          </TouchableOpacity>
+
+          {/* 添加标注按钮 */}
+          <TouchableOpacity
+            onPress={() => {
+              setNewMarkerLat(center.lat.toFixed(4));
+              setNewMarkerLon(center.lon.toFixed(4));
+              setShowAddMarkerModal(true);
+            }}
+            style={{
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={{ fontSize: 10, color: "#333" }}>➕ 标注</Text>
           </TouchableOpacity>
         </View>
 
@@ -620,10 +914,44 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
           }}
         >
           <Text style={{ fontSize: 10, color: "#fff", textAlign: "center" }}>
-            拖动绘制选择区域 | 当前: {bounds.west.toFixed(2)}°E ~ {bounds.east.toFixed(2)}°E, {bounds.south.toFixed(2)}°N ~ {bounds.north.toFixed(2)}°N
+            单指拖动平移 | 双指缩放 | 长按绘制选区 | {bounds.west.toFixed(2)}°E ~ {bounds.east.toFixed(2)}°E
           </Text>
         </View>
       </View>
+
+      {/* 标注点列表 */}
+      {markers.length > 0 && (
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+            标注点（长按地图上的标注可删除）：
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              {markers.map((marker) => (
+                <TouchableOpacity
+                  key={marker.id}
+                  onPress={() => setCenter({ lat: marker.lat, lon: marker.lon })}
+                  onLongPress={() => removeMarker(marker.id)}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Text style={{ fontSize: 12 }}>📍</Text>
+                  <Text style={{ fontSize: 12, color: colors.foreground }}>{marker.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </ScrollView>
+        </View>
+      )}
 
       {/* 经纬度跳转弹窗 */}
       <Modal
@@ -725,6 +1053,132 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
                 }}
               >
                 <Text style={{ fontSize: 14, color: "#fff", fontWeight: "600" }}>跳转</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 添加标注弹窗 */}
+      <Modal
+        visible={showAddMarkerModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddMarkerModal(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 12,
+              padding: 20,
+              width: 280,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground, marginBottom: 16 }}>
+              添加标注点
+            </Text>
+            
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>标注名称</Text>
+              <TextInput
+                value={newMarkerLabel}
+                onChangeText={setNewMarkerLabel}
+                placeholder="例如: 观测点1"
+                placeholderTextColor={colors.muted}
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.foreground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              />
+            </View>
+            
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>纬度</Text>
+              <TextInput
+                value={newMarkerLat}
+                onChangeText={setNewMarkerLat}
+                placeholder="例如: 37.5"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.foreground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              />
+            </View>
+            
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>经度</Text>
+              <TextInput
+                value={newMarkerLon}
+                onChangeText={setNewMarkerLon}
+                placeholder="例如: 36.75"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.foreground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              />
+            </View>
+            
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => setShowAddMarkerModal(false)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  backgroundColor: colors.surface,
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: colors.foreground }}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={addMarker}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  backgroundColor: colors.primary,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, color: "#fff", fontWeight: "600" }}>添加</Text>
               </TouchableOpacity>
             </View>
           </View>

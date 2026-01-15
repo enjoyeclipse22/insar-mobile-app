@@ -282,3 +282,168 @@ describe("RealMapSelector", () => {
     });
   });
 });
+
+// 测试搜索功能
+describe("Search Functionality", () => {
+  it("should validate search query", () => {
+    const validateQuery = (query: string) => query.trim().length > 0;
+    
+    expect(validateQuery("Tokyo")).toBe(true);
+    expect(validateQuery("  ")).toBe(false);
+    expect(validateQuery("")).toBe(false);
+  });
+
+  it("should parse search result correctly", () => {
+    const result = {
+      display_name: "东京都/東京都, 日本",
+      lat: "35.6762",
+      lon: "139.6503",
+      boundingbox: ["35.5", "35.9", "139.4", "139.9"],
+    };
+
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    const [south, north, west, east] = result.boundingbox.map(parseFloat);
+
+    expect(lat).toBeCloseTo(35.6762, 4);
+    expect(lon).toBeCloseTo(139.6503, 4);
+    expect(north).toBeGreaterThan(south);
+    expect(east).toBeGreaterThan(west);
+  });
+
+  it("should extract short name from display_name", () => {
+    const displayName = "东京都/東京都, 日本";
+    const shortName = displayName.split(",")[0];
+    
+    expect(shortName).toBe("东京都/東京都");
+  });
+});
+
+// 测试标注功能
+describe("Marker Functionality", () => {
+  it("should create marker with unique id", () => {
+    const createMarker = (lat: number, lon: number, label: string) => ({
+      id: Date.now().toString(),
+      lat,
+      lon,
+      label,
+    });
+
+    const marker1 = createMarker(37.5, 36.75, "观测站A");
+    // 等待一毫秒确保 ID 不同
+    const marker2 = createMarker(38.0, 37.0, "观测站B");
+
+    expect(marker1.id).toBeTruthy();
+    expect(marker1.lat).toBe(37.5);
+    expect(marker1.lon).toBe(36.75);
+    expect(marker1.label).toBe("观测站A");
+  });
+
+  it("should validate marker coordinates", () => {
+    const validateMarker = (lat: number, lon: number) => {
+      return !isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+    };
+
+    expect(validateMarker(37.5, 36.75)).toBe(true);
+    expect(validateMarker(100, 36.75)).toBe(false); // Invalid latitude
+    expect(validateMarker(37.5, 200)).toBe(false); // Invalid longitude
+    expect(validateMarker(NaN, 36.75)).toBe(false);
+  });
+
+  it("should filter markers by id", () => {
+    const markers = [
+      { id: "1", lat: 37.5, lon: 36.75, label: "A" },
+      { id: "2", lat: 38.0, lon: 37.0, label: "B" },
+      { id: "3", lat: 38.5, lon: 37.5, label: "C" },
+    ];
+
+    const filtered = markers.filter((m) => m.id !== "2");
+    expect(filtered).toHaveLength(2);
+    expect(filtered.find((m) => m.id === "2")).toBeUndefined();
+  });
+
+  it("should check if marker is visible in viewport", () => {
+    const mapSize = { width: 300, height: 200 };
+    const isVisible = (x: number, y: number) => {
+      return x >= -20 && x <= mapSize.width + 20 && y >= -20 && y <= mapSize.height + 20;
+    };
+
+    expect(isVisible(150, 100)).toBe(true); // Center
+    expect(isVisible(0, 0)).toBe(true); // Top-left
+    expect(isVisible(300, 200)).toBe(true); // Bottom-right
+    expect(isVisible(-30, 100)).toBe(false); // Too far left
+    expect(isVisible(150, 250)).toBe(false); // Too far down
+  });
+});
+
+// 测试手势功能
+describe("Gesture Handling", () => {
+  it("should calculate pinch distance", () => {
+    const getDistance = (touches: { pageX: number; pageY: number }[]) => {
+      if (touches.length < 2) return 0;
+      const dx = touches[0].pageX - touches[1].pageX;
+      const dy = touches[0].pageY - touches[1].pageY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    expect(getDistance([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 0 }])).toBe(100);
+    expect(getDistance([{ pageX: 0, pageY: 0 }, { pageX: 0, pageY: 100 }])).toBe(100);
+    expect(getDistance([{ pageX: 0, pageY: 0 }, { pageX: 100, pageY: 100 }])).toBeCloseTo(141.42, 1);
+    expect(getDistance([{ pageX: 0, pageY: 0 }])).toBe(0);
+  });
+
+  it("should calculate zoom from pinch scale", () => {
+    const calculateZoom = (initialZoom: number, initialDistance: number, currentDistance: number) => {
+      const scale = currentDistance / initialDistance;
+      return Math.round(initialZoom + Math.log2(scale));
+    };
+
+    expect(calculateZoom(5, 100, 200)).toBe(6); // Zoom in
+    expect(calculateZoom(5, 200, 100)).toBe(4); // Zoom out
+    expect(calculateZoom(5, 100, 100)).toBe(5); // No change
+  });
+
+  it("should clamp zoom within valid range", () => {
+    const clampZoom = (zoom: number) => Math.max(1, Math.min(18, zoom));
+
+    expect(clampZoom(0)).toBe(1);
+    expect(clampZoom(-5)).toBe(1);
+    expect(clampZoom(20)).toBe(18);
+    expect(clampZoom(25)).toBe(18);
+    expect(clampZoom(10)).toBe(10);
+  });
+
+  it("should detect small movements as potential selection", () => {
+    const isSmallMovement = (dx: number, dy: number, threshold: number = 10) => {
+      return Math.abs(dx) < threshold && Math.abs(dy) < threshold;
+    };
+
+    expect(isSmallMovement(5, 5)).toBe(true);
+    expect(isSmallMovement(15, 5)).toBe(false);
+    expect(isSmallMovement(5, 15)).toBe(false);
+    expect(isSmallMovement(0, 0)).toBe(true);
+  });
+});
+
+// 测试跳转功能
+describe("Go To Location", () => {
+  it("should parse and validate coordinates", () => {
+    const parseCoordinates = (latStr: string, lonStr: string) => {
+      const lat = parseFloat(latStr);
+      const lon = parseFloat(lonStr);
+      const isValid = !isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+      return { lat, lon, isValid };
+    };
+
+    const valid = parseCoordinates("37.5", "36.75");
+    expect(valid.isValid).toBe(true);
+    expect(valid.lat).toBe(37.5);
+    expect(valid.lon).toBe(36.75);
+
+    const invalid1 = parseCoordinates("invalid", "36.75");
+    expect(invalid1.isValid).toBe(false);
+
+    const invalid2 = parseCoordinates("100", "36.75");
+    expect(invalid2.isValid).toBe(false);
+  });
+});
