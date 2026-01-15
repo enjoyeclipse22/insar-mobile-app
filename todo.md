@@ -402,3 +402,12 @@
 - [ ] 实现时间序列查看
 - [ ] 实现截图和分享
 
+
+
+## 第 12 阶段：ASF API Token 配置
+
+### ASF API 凭证配置
+- [x] 配置 ASF_API_TOKEN 环境变量
+- [x] 更新 ASF API 模块支持 Bearer Token 认证
+- [x] 验证 API 凭证有效性（4 个测试全部通过）
+- [x] 实现自动认证功能

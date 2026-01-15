@@ -21,19 +21,22 @@ logger = logging.getLogger(__name__)
 class ASFAPIClient:
     """Client for ASF Data Search and Download API"""
     
-    def __init__(self, username: str = None, password: str = None):
+    def __init__(self, token: str = None, username: str = None, password: str = None):
         """
         Initialize ASF API client
         
         Args:
-            username: ASF/Earthdata username
-            password: ASF/Earthdata password
+            token: ASF/Earthdata Bearer token (preferred)
+            username: ASF/Earthdata username (legacy)
+            password: ASF/Earthdata password (legacy)
         """
+        # Prefer token-based authentication
+        self.token = token or os.environ.get("ASF_API_TOKEN")
         self.username = username or os.environ.get("ASF_USERNAME")
         self.password = password or os.environ.get("ASF_PASSWORD")
         
         self.search_url = "https://api.daac.asf.alaska.edu/services/search/param"
-        self.download_url = "https://datapool.asf.alaska.edu"
+        self.download_url = "https://data.asf.alaska.edu"
         
         self.session = requests.Session()
         self.download_dir = Path("./data/sentinel1")
@@ -41,7 +44,20 @@ class ASFAPIClient:
         
         self._authenticated = False
         
+        # Auto-authenticate if token is available
+        if self.token:
+            self._setup_token_auth()
+        
         logger.info("ASFAPIClient initialized")
+    
+    def _setup_token_auth(self):
+        """Setup Bearer token authentication"""
+        self.session.headers.update({
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/json"
+        })
+        self._authenticated = True
+        logger.info("ASF token authentication configured")
     
     def authenticate(self) -> bool:
         """
@@ -50,6 +66,25 @@ class ASFAPIClient:
         Returns:
             True if authentication successful
         """
+        # If token is available, use token auth
+        if self.token:
+            self._setup_token_auth()
+            # Verify token by making a test request
+            try:
+                test_url = "https://api.daac.asf.alaska.edu/services/search/param?platform=Sentinel-1&maxResults=1&output=json"
+                response = self.session.get(test_url, timeout=30)
+                if response.status_code == 200:
+                    logger.info("ASF token authentication verified")
+                    return True
+                else:
+                    logger.warning(f"ASF token verification failed: {response.status_code}")
+                    self._authenticated = False
+                    return False
+            except Exception as e:
+                logger.error(f"ASF token verification error: {e}")
+                return False
+        
+        # Fallback to username/password auth
         if not self.username or not self.password:
             logger.warning("ASF credentials not provided")
             return False
