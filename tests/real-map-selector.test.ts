@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 describe("RealMapSelector", () => {
   // 测试瓦片 URL 生成
   describe("getTileUrl", () => {
-    it("should generate valid OpenStreetMap tile URLs", () => {
+    it("should generate valid OpenStreetMap tile URLs for street layer", () => {
       const servers = ['a', 'b', 'c'];
       const x = 10;
       const y = 5;
@@ -14,6 +14,27 @@ describe("RealMapSelector", () => {
       
       expect(url).toMatch(/^https:\/\/[abc]\.tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/);
       expect(url).toContain("tile.openstreetmap.org");
+    });
+
+    it("should generate valid ESRI satellite tile URLs", () => {
+      const x = 10;
+      const y = 5;
+      const z = 8;
+      const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+      
+      expect(url).toContain("arcgisonline.com");
+      expect(url).toContain("World_Imagery");
+    });
+
+    it("should generate valid OpenTopoMap terrain tile URLs", () => {
+      const servers = ['a', 'b', 'c'];
+      const x = 10;
+      const y = 5;
+      const z = 8;
+      const server = servers[(x + y) % servers.length];
+      const url = `https://${server}.tile.opentopomap.org/${z}/${x}/${y}.png`;
+      
+      expect(url).toMatch(/^https:\/\/[abc]\.tile\.opentopomap\.org\/\d+\/\d+\/\d+\.png$/);
     });
   });
 
@@ -67,6 +88,56 @@ describe("RealMapSelector", () => {
     });
   });
 
+  // 测试比例尺计算
+  describe("scale calculation", () => {
+    it("should calculate scale info at different zoom levels", () => {
+      const earthCircumference = 40075016.686;
+      const lat = 37.5;
+      const zoom = 5;
+      
+      const metersPerPixel = (earthCircumference * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+      
+      expect(metersPerPixel).toBeGreaterThan(0);
+      expect(metersPerPixel).toBeLessThan(earthCircumference);
+    });
+
+    it("should return km unit at low zoom levels", () => {
+      const earthCircumference = 40075016.686;
+      const lat = 37.5;
+      const zoom = 3;
+      const targetWidth = 100;
+      
+      const metersPerPixel = (earthCircumference * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+      let distance = metersPerPixel * targetWidth;
+      let unit = "m";
+      
+      if (distance >= 1000) {
+        distance = distance / 1000;
+        unit = "km";
+      }
+      
+      expect(unit).toBe("km");
+    });
+
+    it("should return m unit at high zoom levels", () => {
+      const earthCircumference = 40075016.686;
+      const lat = 37.5;
+      const zoom = 15;
+      const targetWidth = 100;
+      
+      const metersPerPixel = (earthCircumference * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+      let distance = metersPerPixel * targetWidth;
+      let unit = "m";
+      
+      if (distance >= 1000) {
+        distance = distance / 1000;
+        unit = "km";
+      }
+      
+      expect(unit).toBe("m");
+    });
+  });
+
   // 测试边界验证
   describe("bounds validation", () => {
     it("should validate bounds correctly", () => {
@@ -111,6 +182,52 @@ describe("RealMapSelector", () => {
       
       expect(centerLat).toBeCloseTo(37.5, 1);
       expect(centerLon).toBeCloseTo(36.75, 1);
+    });
+  });
+
+  // 测试地图图层
+  describe("map layers", () => {
+    const mapLayers = {
+      street: { name: "街道" },
+      satellite: { name: "卫星" },
+      terrain: { name: "地形" },
+    };
+
+    it("should have three map layer types", () => {
+      expect(Object.keys(mapLayers)).toHaveLength(3);
+    });
+
+    it("should have Chinese names for all layers", () => {
+      expect(mapLayers.street.name).toBe("街道");
+      expect(mapLayers.satellite.name).toBe("卫星");
+      expect(mapLayers.terrain.name).toBe("地形");
+    });
+  });
+
+  // 测试坐标验证
+  describe("coordinate validation", () => {
+    it("should validate latitude range (-90 to 90)", () => {
+      const validateLat = (lat: number) => lat >= -90 && lat <= 90;
+      
+      expect(validateLat(0)).toBe(true);
+      expect(validateLat(45)).toBe(true);
+      expect(validateLat(-45)).toBe(true);
+      expect(validateLat(90)).toBe(true);
+      expect(validateLat(-90)).toBe(true);
+      expect(validateLat(91)).toBe(false);
+      expect(validateLat(-91)).toBe(false);
+    });
+
+    it("should validate longitude range (-180 to 180)", () => {
+      const validateLon = (lon: number) => lon >= -180 && lon <= 180;
+      
+      expect(validateLon(0)).toBe(true);
+      expect(validateLon(90)).toBe(true);
+      expect(validateLon(-90)).toBe(true);
+      expect(validateLon(180)).toBe(true);
+      expect(validateLon(-180)).toBe(true);
+      expect(validateLon(181)).toBe(false);
+      expect(validateLon(-181)).toBe(false);
     });
   });
 

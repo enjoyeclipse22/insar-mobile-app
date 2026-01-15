@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions, Modal } from "react-native";
 import { Image } from "expo-image";
 import { useColors } from "@/hooks/use-colors";
 
@@ -23,13 +23,36 @@ const presetAreas = [
   { name: "冰岛火山区", north: 64.5, south: 63.5, east: -18.0, west: -20.0 },
 ];
 
-// 计算地图瓦片 URL - 使用多个瓦片服务器提高加载速度
-function getTileUrl(x: number, y: number, z: number): string {
-  // 使用 OpenStreetMap 瓦片服务器
-  const servers = ['a', 'b', 'c'];
-  const server = servers[(x + y) % servers.length];
-  return `https://${server}.tile.openstreetmap.org/${z}/${x}/${y}.png`;
-}
+// 地图图层类型
+type MapLayerType = "street" | "satellite" | "terrain";
+
+// 地图图层配置
+const mapLayers: Record<MapLayerType, { name: string; getTileUrl: (x: number, y: number, z: number) => string }> = {
+  street: {
+    name: "街道",
+    getTileUrl: (x, y, z) => {
+      const servers = ['a', 'b', 'c'];
+      const server = servers[(x + y) % servers.length];
+      return `https://${server}.tile.openstreetmap.org/${z}/${x}/${y}.png`;
+    },
+  },
+  satellite: {
+    name: "卫星",
+    getTileUrl: (x, y, z) => {
+      // 使用 ESRI World Imagery 卫星图
+      return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+    },
+  },
+  terrain: {
+    name: "地形",
+    getTileUrl: (x, y, z) => {
+      // 使用 OpenTopoMap 地形图
+      const servers = ['a', 'b', 'c'];
+      const server = servers[(x + y) % servers.length];
+      return `https://${server}.tile.opentopomap.org/${z}/${x}/${y}.png`;
+    },
+  },
+};
 
 // 经纬度转瓦片坐标
 function lonLatToTile(lon: number, lat: number, zoom: number): { x: number; y: number } {
@@ -49,6 +72,40 @@ function tileToLonLat(x: number, y: number, zoom: number): { lon: number; lat: n
   return { lon, lat };
 }
 
+// 计算比例尺
+function getScaleInfo(lat: number, zoom: number): { distance: number; unit: string; width: number } {
+  // 地球周长（米）
+  const earthCircumference = 40075016.686;
+  // 在当前纬度和缩放级别下，每像素代表的米数
+  const metersPerPixel = (earthCircumference * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom + 8);
+  
+  // 目标比例尺宽度（像素）
+  const targetWidth = 100;
+  // 计算目标宽度对应的实际距离
+  let distance = metersPerPixel * targetWidth;
+  let unit = "m";
+  
+  // 转换为合适的单位
+  if (distance >= 1000) {
+    distance = distance / 1000;
+    unit = "km";
+  }
+  
+  // 取整到合适的数值
+  const niceNumbers = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  let niceDistance = niceNumbers[0];
+  for (const n of niceNumbers) {
+    if (n <= distance * 1.5) {
+      niceDistance = n;
+    }
+  }
+  
+  // 计算实际宽度
+  const actualWidth = (niceDistance * (unit === "km" ? 1000 : 1)) / metersPerPixel;
+  
+  return { distance: niceDistance, unit, width: actualWidth };
+}
+
 export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps) {
   const colors = useColors();
   const [zoom, setZoom] = useState(5);
@@ -60,6 +117,11 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
+  const [mapLayer, setMapLayer] = useState<MapLayerType>("street");
+  const [showLayerPicker, setShowLayerPicker] = useState(false);
+  const [showGoToModal, setShowGoToModal] = useState(false);
+  const [goToLat, setGoToLat] = useState("");
+  const [goToLon, setGoToLon] = useState("");
 
   // 更新中心点当边界变化时
   useEffect(() => {
@@ -68,6 +130,11 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
       lon: (bounds.east + bounds.west) / 2,
     });
   }, [bounds]);
+
+  // 获取当前图层的瓦片 URL
+  const getTileUrl = useCallback((x: number, y: number, z: number) => {
+    return mapLayers[mapLayer].getTileUrl(x, y, z);
+  }, [mapLayer]);
 
   // 计算需要显示的瓦片
   const getTiles = useCallback(() => {
@@ -112,7 +179,7 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     }
     
     return tiles;
-  }, [center, zoom, mapSize]);
+  }, [center, zoom, mapSize, getTileUrl]);
 
   // 像素坐标转经纬度
   const pixelToLonLat = useCallback((px: number, py: number): { lon: number; lat: number } => {
@@ -219,8 +286,21 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
   const handleZoomIn = () => setZoom((z) => Math.min(18, z + 1));
   const handleZoomOut = () => setZoom((z) => Math.max(1, z - 1));
 
+  // 跳转到指定经纬度
+  const handleGoTo = () => {
+    const lat = parseFloat(goToLat);
+    const lon = parseFloat(goToLon);
+    if (!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+      setCenter({ lat, lon });
+      setShowGoToModal(false);
+      setGoToLat("");
+      setGoToLon("");
+    }
+  };
+
   const tiles = getTiles();
   const selectionRect = getSelectionRect();
+  const scaleInfo = getScaleInfo(center.lat, zoom);
 
   // 计算正在绘制的选择框
   const drawingRect = isSelecting && selectionStart && selectionEnd ? {
@@ -280,7 +360,7 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
         {/* 地图瓦片 */}
         {tiles.map((tile) => (
           <Image
-            key={`${tile.x}-${tile.y}-${zoom}`}
+            key={`${tile.x}-${tile.y}-${zoom}-${mapLayer}`}
             source={{ uri: tile.url }}
             style={{
               position: "absolute",
@@ -326,15 +406,165 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
           />
         )}
 
+        {/* 指北针 */}
+        <View
+          style={{
+            position: "absolute",
+            left: 8,
+            top: 8,
+            width: 36,
+            height: 36,
+            backgroundColor: "rgba(255,255,255,0.95)",
+            borderRadius: 18,
+            justifyContent: "center",
+            alignItems: "center",
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.2,
+            shadowRadius: 2,
+            elevation: 2,
+          }}
+        >
+          <View style={{ alignItems: "center" }}>
+            <Text style={{ fontSize: 10, fontWeight: "bold", color: "#E53935" }}>N</Text>
+            <View
+              style={{
+                width: 0,
+                height: 0,
+                borderLeftWidth: 5,
+                borderRightWidth: 5,
+                borderBottomWidth: 10,
+                borderLeftColor: "transparent",
+                borderRightColor: "transparent",
+                borderBottomColor: "#E53935",
+                marginTop: -2,
+              }}
+            />
+            <View
+              style={{
+                width: 0,
+                height: 0,
+                borderLeftWidth: 5,
+                borderRightWidth: 5,
+                borderTopWidth: 10,
+                borderLeftColor: "transparent",
+                borderRightColor: "transparent",
+                borderTopColor: "#333",
+                marginTop: -2,
+              }}
+            />
+          </View>
+        </View>
+
+        {/* 缩放级别和图层切换 */}
+        <View
+          style={{
+            position: "absolute",
+            left: 50,
+            top: 8,
+            flexDirection: "row",
+            gap: 4,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={{ fontSize: 10, color: "#333" }}>缩放: {zoom}</Text>
+          </View>
+          
+          {/* 图层切换按钮 */}
+          <TouchableOpacity
+            onPress={() => setShowLayerPicker(!showLayerPicker)}
+            style={{
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Text style={{ fontSize: 10, color: "#333" }}>🗺️ {mapLayers[mapLayer].name}</Text>
+          </TouchableOpacity>
+
+          {/* 定位按钮 */}
+          <TouchableOpacity
+            onPress={() => setShowGoToModal(true)}
+            style={{
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={{ fontSize: 10, color: "#333" }}>📍 定位</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* 图层选择下拉菜单 */}
+        {showLayerPicker && (
+          <View
+            style={{
+              position: "absolute",
+              left: 88,
+              top: 32,
+              backgroundColor: "rgba(255,255,255,0.98)",
+              borderRadius: 8,
+              overflow: "hidden",
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.25,
+              shadowRadius: 4,
+              elevation: 5,
+            }}
+          >
+            {(Object.keys(mapLayers) as MapLayerType[]).map((layer) => (
+              <TouchableOpacity
+                key={layer}
+                onPress={() => {
+                  setMapLayer(layer);
+                  setShowLayerPicker(false);
+                }}
+                style={{
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  backgroundColor: mapLayer === layer ? colors.primary : "transparent",
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: mapLayer === layer ? "#fff" : "#333",
+                    fontWeight: mapLayer === layer ? "600" : "400",
+                  }}
+                >
+                  {mapLayers[layer].name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* 缩放控制 */}
         <View
           style={{
             position: "absolute",
             right: 8,
             top: 8,
-            backgroundColor: "rgba(255,255,255,0.9)",
+            backgroundColor: "rgba(255,255,255,0.95)",
             borderRadius: 8,
             overflow: "hidden",
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.2,
+            shadowRadius: 2,
+            elevation: 2,
           }}
         >
           <TouchableOpacity
@@ -348,19 +578,32 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
           </TouchableOpacity>
         </View>
 
-        {/* 缩放级别显示 */}
+        {/* 比例尺 */}
         <View
           style={{
             position: "absolute",
             left: 8,
-            top: 8,
+            bottom: 36,
             backgroundColor: "rgba(255,255,255,0.9)",
             borderRadius: 4,
-            paddingHorizontal: 8,
-            paddingVertical: 4,
+            padding: 4,
           }}
         >
-          <Text style={{ fontSize: 10, color: "#333" }}>缩放: {zoom}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <View
+              style={{
+                width: scaleInfo.width,
+                height: 4,
+                backgroundColor: "#333",
+                borderLeftWidth: 1,
+                borderRightWidth: 1,
+                borderColor: "#333",
+              }}
+            />
+            <Text style={{ fontSize: 9, color: "#333" }}>
+              {scaleInfo.distance} {scaleInfo.unit}
+            </Text>
+          </View>
         </View>
 
         {/* 操作提示 */}
@@ -381,6 +624,112 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
           </Text>
         </View>
       </View>
+
+      {/* 经纬度跳转弹窗 */}
+      <Modal
+        visible={showGoToModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGoToModal(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 12,
+              padding: 20,
+              width: 280,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground, marginBottom: 16 }}>
+              跳转到指定位置
+            </Text>
+            
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>纬度 (-90 ~ 90)</Text>
+              <TextInput
+                value={goToLat}
+                onChangeText={setGoToLat}
+                placeholder="例如: 37.5"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.foreground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              />
+            </View>
+            
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 4 }}>经度 (-180 ~ 180)</Text>
+              <TextInput
+                value={goToLon}
+                onChangeText={setGoToLon}
+                placeholder="例如: 36.75"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.foreground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              />
+            </View>
+            
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => setShowGoToModal(false)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  backgroundColor: colors.surface,
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: colors.foreground }}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleGoTo}
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  backgroundColor: colors.primary,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, color: "#fff", fontWeight: "600" }}>跳转</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* 手动输入边界坐标 */}
       <View style={{ marginTop: 12 }}>
