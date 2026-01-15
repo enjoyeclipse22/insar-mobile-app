@@ -1,9 +1,10 @@
-import { ScrollView, Text, View, TouchableOpacity, FlatList, ActivityIndicator } from "react-native";
+import { ScrollView, Text, View, TouchableOpacity, FlatList, ActivityIndicator, Pressable } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { cn } from "@/lib/utils";
 
 interface ProcessingStep {
   id: number;
@@ -26,9 +27,15 @@ export default function ProcessingMonitorScreen() {
   const colors = useColors();
   const params = useLocalSearchParams();
   const projectId = params.projectId as string;
+  const taskId = params.taskId as string;
 
   const [isProcessing, setIsProcessing] = useState(true);
+  const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const flatListRef = useRef<FlatList>(null);
+
   const [steps, setSteps] = useState<ProcessingStep[]>([
     { id: 1, stepName: "data_download", status: "completed", progress: 100, duration: 45 },
     { id: 2, stepName: "coregistration", status: "completed", progress: 100, duration: 67 },
@@ -95,16 +102,46 @@ export default function ProcessingMonitorScreen() {
   ]);
 
   useEffect(() => {
+    // Simulate WebSocket connection
+    const connectTimeout = setTimeout(() => {
+      setWsConnected(true);
+    }, 500);
+
     // Simulate progress updates
     const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 65) return prev;
-        return prev + Math.random() * 5;
-      });
-    }, 1000);
+      if (!isPaused) {
+        setProgress((prev) => {
+          if (prev >= 65) return prev;
+          return prev + Math.random() * 5;
+        });
 
-    return () => clearInterval(interval);
-  }, []);
+        // Simulate new logs
+        if (Math.random() > 0.6) {
+          const newLog: ProcessingLog = {
+            id: logs.length + 1,
+            logLevel: Math.random() > 0.8 ? "debug" : "info",
+            message: `Processing update at ${new Date().toLocaleTimeString()}`,
+            timestamp: new Date().toLocaleTimeString(),
+          };
+          setLogs((prev) => [...prev, newLog]);
+        }
+      }
+    }, 1500);
+
+    return () => {
+      clearTimeout(connectTimeout);
+      clearInterval(interval);
+    };
+  }, [isPaused, logs.length]);
+
+  // Auto-scroll to latest log
+  useEffect(() => {
+    if (autoScroll && logs.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [logs, autoScroll]);
 
   const getStepIcon = (status: string) => {
     switch (status) {
@@ -213,7 +250,7 @@ export default function ProcessingMonitorScreen() {
         flexDirection: "row",
       }}
     >
-      <Text style={{ fontSize: 11, color: colors.muted, width: 120 }}>
+      <Text style={{ fontSize: 11, color: colors.muted, width: 100 }}>
         {log.timestamp}
       </Text>
       <Text
@@ -254,7 +291,20 @@ export default function ProcessingMonitorScreen() {
           <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
             处理监控
           </Text>
-          <View style={{ width: 24 }} />
+          {/* WebSocket Status */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: wsConnected ? colors.success : colors.warning,
+              }}
+            />
+            <Text style={{ fontSize: 10, color: "#FFFFFF" }}>
+              {wsConnected ? "WS" : "..."}
+            </Text>
+          </View>
         </View>
 
         {/* Overall Progress */}
@@ -290,9 +340,24 @@ export default function ProcessingMonitorScreen() {
 
           {/* Processing Logs */}
           <View style={{ paddingVertical: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground, marginBottom: 12, marginLeft: 24 }}>
-              实时日志
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12, marginHorizontal: 24 }}>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>
+                实时日志 (WebSocket)
+              </Text>
+              <Pressable
+                onPress={() => setAutoScroll(!autoScroll)}
+                style={{
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  backgroundColor: colors.surface,
+                  borderRadius: 6,
+                }}
+              >
+                <Text style={{ fontSize: 10, color: colors.primary, fontWeight: "600" }}>
+                  {autoScroll ? "自动" : "手动"}
+                </Text>
+              </Pressable>
+            </View>
             <View
               style={{
                 backgroundColor: colors.surface,
@@ -302,7 +367,58 @@ export default function ProcessingMonitorScreen() {
                 maxHeight: 300,
               }}
             >
-              {logs.map(renderLog)}
+              {logs.length === 0 ? (
+                <View style={{ flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 40 }}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={{ fontSize: 12, color: colors.muted, marginTop: 8 }}>
+                    等待日志...
+                  </Text>
+                </View>
+              ) : (
+                <FlatList
+                  ref={flatListRef}
+                  data={logs}
+                  renderItem={({ item }) => renderLog(item)}
+                  keyExtractor={(item) => item.id.toString()}
+                  scrollEnabled={true}
+                  nestedScrollEnabled={true}
+                />
+              )}
+            </View>
+
+            {/* Log Controls */}
+            <View style={{ flexDirection: "row", gap: 8, marginHorizontal: 12, marginTop: 12 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingVertical: 8,
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+                onPress={() => setLogs([])}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.foreground }}>
+                  清空日志
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surface,
+                  borderRadius: 8,
+                  paddingVertical: 8,
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.foreground }}>
+                  导出日志
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -321,16 +437,17 @@ export default function ProcessingMonitorScreen() {
           <TouchableOpacity
             style={{
               flex: 1,
-              backgroundColor: colors.surface,
+              backgroundColor: isPaused ? colors.warning : colors.surface,
               borderRadius: 12,
               paddingVertical: 12,
               alignItems: "center",
               borderWidth: 1,
               borderColor: colors.border,
             }}
+            onPress={() => setIsPaused(!isPaused)}
           >
-            <Text style={{ fontSize: 14, fontWeight: "600", color: colors.primary }}>
-              暂停
+            <Text style={{ fontSize: 14, fontWeight: "600", color: isPaused ? "#FFFFFF" : colors.primary }}>
+              {isPaused ? "继续" : "暂停"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -340,6 +457,10 @@ export default function ProcessingMonitorScreen() {
               borderRadius: 12,
               paddingVertical: 12,
               alignItems: "center",
+            }}
+            onPress={() => {
+              setIsProcessing(false);
+              router.back();
             }}
           >
             <Text style={{ fontSize: 14, fontWeight: "600", color: "#FFFFFF" }}>
