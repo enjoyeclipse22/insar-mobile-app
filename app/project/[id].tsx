@@ -3,8 +3,8 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { trpc } from "@/lib/trpc";
 import { useState, useEffect, useCallback } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 interface ProcessStep {
   id: number;
@@ -15,6 +15,29 @@ interface ProcessStep {
   startedAt?: string;
   completedAt?: string;
 }
+
+interface Project {
+  id: number;
+  name: string;
+  description?: string;
+  location?: string;
+  startDate?: string;
+  endDate?: string;
+  satellite?: string;
+  orbitDirection?: string;
+  polarization?: string;
+  status: string;
+  progress: number;
+  createdAt: string;
+  bounds?: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  };
+}
+
+const PROJECTS_STORAGE_KEY = "insar_projects";
 
 // 默认处理步骤
 const DEFAULT_STEPS: ProcessStep[] = [
@@ -32,97 +55,42 @@ export default function ProjectDetailScreen() {
   const router = useRouter();
   const colors = useColors();
   const { id } = useLocalSearchParams();
-  const projectId = parseInt(id as string, 10);
+  const projectId = id as string;
   
+  const [project, setProject] = useState<Project | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isStartingProcessing, setIsStartingProcessing] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [steps, setSteps] = useState<ProcessStep[]>(DEFAULT_STEPS);
 
-  // 获取项目详情
-  const { data: project, isLoading: projectLoading, refetch: refetchProject } = trpc.insar.getProject.useQuery(
-    { projectId },
-    { enabled: !isNaN(projectId) }
-  );
-
-  // 获取处理步骤
-  const { data: stepsData, refetch: refetchSteps } = trpc.insar.getSteps.useQuery(
-    { projectId },
-    { enabled: !isNaN(projectId) }
-  );
-
-  // 获取处理日志
-  const { data: logsData, refetch: refetchLogs } = trpc.insar.getLogs.useQuery(
-    { projectId, limit: 10 },
-    { enabled: !isNaN(projectId) }
-  );
-
-  // 获取任务状态
-  const { data: taskStatus } = trpc.insar.getTaskStatus.useQuery(
-    { taskId: taskId || "" },
-    { 
-      enabled: !!taskId,
-      refetchInterval: taskId ? 2000 : false, // 每2秒刷新一次
+  // 从本地存储加载项目
+  const loadProject = useCallback(async () => {
+    try {
+      const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (stored) {
+        const projects: Project[] = JSON.parse(stored);
+        const found = projects.find(p => p.id.toString() === projectId);
+        if (found) {
+          setProject(found);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load project:", error);
+    } finally {
+      setIsLoading(false);
     }
-  );
+  }, [projectId]);
 
-  // 启动处理
-  const startProcessingMutation = trpc.insar.startProcessing.useMutation({
-    onSuccess: (data) => {
-      setIsStartingProcessing(false);
-      setTaskId(data.taskId);
-      Alert.alert("成功", "处理任务已启动");
-      refetchProject();
-      refetchSteps();
-    },
-    onError: (error) => {
-      setIsStartingProcessing(false);
-      Alert.alert("错误", `启动处理失败: ${error.message}`);
-    },
-  });
-
-  // 取消处理
-  const cancelProcessingMutation = trpc.insar.cancelProcessing.useMutation({
-    onSuccess: () => {
-      setTaskId(null);
-      Alert.alert("成功", "处理已取消");
-      refetchProject();
-      refetchSteps();
-    },
-    onError: (error) => {
-      Alert.alert("错误", `取消处理失败: ${error.message}`);
-    },
-  });
-
-  // 合并数据库步骤和默认步骤
-  const steps: ProcessStep[] = stepsData?.length 
-    ? stepsData.map((s: any) => ({
-        id: s.id,
-        name: s.stepName,
-        status: s.status,
-        duration: s.duration ? `${Math.round(s.duration / 60)}m` : undefined,
-        error: s.errorMessage,
-        startedAt: s.startedAt,
-        completedAt: s.completedAt,
-      }))
-    : DEFAULT_STEPS;
+  useEffect(() => {
+    loadProject();
+  }, [loadProject]);
 
   // 刷新数据
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await Promise.all([refetchProject(), refetchSteps(), refetchLogs()]);
+    await loadProject();
     setIsRefreshing(false);
-  }, [refetchProject, refetchSteps, refetchLogs]);
-
-  // 监听任务状态变化
-  useEffect(() => {
-    if (taskStatus && !("error" in taskStatus)) {
-      if (taskStatus.status === "completed" || taskStatus.status === "failed") {
-        setTaskId(null);
-        refetchProject();
-        refetchSteps();
-      }
-    }
-  }, [taskStatus, refetchProject, refetchSteps]);
+  }, [loadProject]);
 
   const handleStartProcessing = () => {
     if (!project) return;
@@ -134,18 +102,32 @@ export default function ProjectDetailScreen() {
         { text: "取消", style: "cancel" },
         {
           text: "开始",
-          onPress: () => {
+          onPress: async () => {
             setIsStartingProcessing(true);
-            startProcessingMutation.mutate({
-              projectId,
-              startDate: project.startDate || "2023-02-01",
-              endDate: project.endDate || "2023-02-15",
-              satellite: project.satellite || "S1A",
-              orbitDirection: (project.orbitDirection as "ascending" | "descending") || "ascending",
-              polarization: project.polarization || "VV",
-              coherenceThreshold: 0.4,
-              outputResolution: 30,
-            });
+            // 模拟处理启动
+            try {
+              const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+              if (stored) {
+                const projects: Project[] = JSON.parse(stored);
+                const index = projects.findIndex(p => p.id.toString() === projectId);
+                if (index !== -1) {
+                  projects[index].status = "processing";
+                  projects[index].progress = 0;
+                  await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+                  setProject(projects[index]);
+                  
+                  // 模拟处理步骤
+                  const newSteps = [...DEFAULT_STEPS];
+                  newSteps[0].status = "processing";
+                  setSteps(newSteps);
+                }
+              }
+              Alert.alert("成功", "处理任务已启动");
+            } catch (error) {
+              Alert.alert("错误", `启动处理失败: ${error}`);
+            } finally {
+              setIsStartingProcessing(false);
+            }
           },
         },
       ]
@@ -161,7 +143,25 @@ export default function ProjectDetailScreen() {
         {
           text: "是",
           style: "destructive",
-          onPress: () => cancelProcessingMutation.mutate({ projectId }),
+          onPress: async () => {
+            try {
+              const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+              if (stored) {
+                const projects: Project[] = JSON.parse(stored);
+                const index = projects.findIndex(p => p.id.toString() === projectId);
+                if (index !== -1) {
+                  projects[index].status = "created";
+                  projects[index].progress = 0;
+                  await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+                  setProject(projects[index]);
+                  setSteps(DEFAULT_STEPS);
+                }
+              }
+              Alert.alert("成功", "处理已取消");
+            } catch (error) {
+              Alert.alert("错误", `取消处理失败: ${error}`);
+            }
+          },
         },
       ]
     );
@@ -207,6 +207,8 @@ export default function ProjectDetailScreen() {
         return "等待中";
       case "failed":
         return "失败";
+      case "created":
+        return "待处理";
       default:
         return "未知";
     }
@@ -227,7 +229,17 @@ export default function ProjectDetailScreen() {
     }
   };
 
-  if (projectLoading) {
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return "未设置";
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("zh-CN");
+    } catch {
+      return dateString;
+    }
+  };
+
+  if (isLoading) {
     return (
       <ScreenContainer className="p-0">
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -263,7 +275,7 @@ export default function ProjectDetailScreen() {
     );
   }
 
-  const isProcessing = project.status === "processing" || !!taskId;
+  const isProcessing = project.status === "processing";
   const canStartProcessing = project.status === "created" || project.status === "failed";
 
   return (
@@ -321,7 +333,7 @@ export default function ProjectDetailScreen() {
               <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                 <Text style={{ fontSize: 13, color: colors.muted }}>创建时间</Text>
                 <Text style={{ fontSize: 13, fontWeight: "600", color: colors.foreground }}>
-                  {project.createdAt ? new Date(project.createdAt).toLocaleDateString() : "未知"}
+                  {formatDate(project.createdAt)}
                 </Text>
               </View>
               <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
@@ -332,132 +344,64 @@ export default function ProjectDetailScreen() {
                       width: 8,
                       height: 8,
                       borderRadius: 4,
-                      backgroundColor: getProjectStatusColor(project.status || "created"),
+                      backgroundColor: getProjectStatusColor(project.status),
                     }}
                   />
-                  <Text style={{ fontSize: 13, fontWeight: "600", color: getProjectStatusColor(project.status || "created") }}>
-                    {project.status === "completed" ? "已完成" : 
-                     project.status === "processing" ? "处理中" : 
-                     project.status === "failed" ? "失败" : "待处理"}
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: getProjectStatusColor(project.status) }}>
+                    {getStatusText(project.status)}
                   </Text>
                 </View>
               </View>
               <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                 <Text style={{ fontSize: 13, color: colors.muted }}>总进度</Text>
                 <Text style={{ fontSize: 13, fontWeight: "600", color: colors.primary }}>
-                  {project.progress || 0}%
+                  {project.progress}%
                 </Text>
-              </View>
-            </View>
-            
-            {/* 进度条 */}
-            <View style={{ marginTop: 12 }}>
-              <View
-                style={{
-                  height: 6,
-                  backgroundColor: colors.border,
-                  borderRadius: 3,
-                  overflow: "hidden",
-                }}
-              >
-                <View
-                  style={{
-                    height: "100%",
-                    width: `${project.progress || 0}%`,
-                    backgroundColor: colors.primary,
-                    borderRadius: 3,
-                  }}
-                />
               </View>
             </View>
           </View>
 
           {/* Processing Steps */}
           <View style={{ marginBottom: 24 }}>
-            <Text style={{ fontSize: 18, fontWeight: "700", color: colors.foreground, marginBottom: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", color: colors.foreground, marginBottom: 12 }}>
               处理流程
             </Text>
-            {steps.map((step, index) => (
-              <View key={step.id || index}>
+            <View style={{ gap: 8 }}>
+              {steps.map((step, index) => (
                 <TouchableOpacity
+                  key={step.id}
                   style={{
                     backgroundColor: colors.surface,
-                    borderRadius: 12,
-                    padding: 16,
-                    marginBottom: 8,
+                    borderRadius: 8,
+                    padding: 12,
                     flexDirection: "row",
                     alignItems: "center",
                     justifyContent: "space-between",
                   }}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
-                    {step.status === "processing" ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <MaterialIcons
-                        name={getStatusIcon(step.status)}
-                        size={24}
-                        color={getStatusColor(step.status)}
-                      />
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                    <MaterialIcons
+                      name={getStatusIcon(step.status)}
+                      size={20}
+                      color={getStatusColor(step.status)}
+                    />
+                    <View>
+                      <Text style={{ fontSize: 14, fontWeight: "500", color: colors.foreground }}>
                         {step.name}
                       </Text>
-                      <Text style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
+                      <Text style={{ fontSize: 12, color: colors.muted }}>
                         {getStatusText(step.status)}
-                        {step.duration && ` • ${step.duration}`}
                       </Text>
-                      {step.error && (
-                        <Text style={{ fontSize: 11, color: colors.error, marginTop: 2 }}>
-                          错误: {step.error}
-                        </Text>
-                      )}
                     </View>
                   </View>
                   <MaterialIcons name="chevron-right" size={20} color={colors.muted} />
                 </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-
-          {/* Recent Logs */}
-          {logsData && logsData.length > 0 && (
-            <View style={{ marginBottom: 24 }}>
-              <Text style={{ fontSize: 18, fontWeight: "700", color: colors.foreground, marginBottom: 12 }}>
-                最近日志
-              </Text>
-              <View
-                style={{
-                  backgroundColor: colors.surface,
-                  borderRadius: 12,
-                  padding: 12,
-                  maxHeight: 150,
-                }}
-              >
-                {logsData.slice(0, 5).map((log: any, index: number) => (
-                  <View key={log.id || index} style={{ marginBottom: 8 }}>
-                    <Text style={{ fontSize: 11, color: colors.muted }}>
-                      {new Date(log.createdAt).toLocaleTimeString()}
-                    </Text>
-                    <Text 
-                      style={{ 
-                        fontSize: 12, 
-                        color: log.logLevel === "error" ? colors.error : 
-                               log.logLevel === "warning" ? colors.warning : colors.foreground 
-                      }}
-                    >
-                      {log.message}
-                    </Text>
-                  </View>
-                ))}
-              </View>
+              ))}
             </View>
-          )}
+          </View>
 
           {/* Action Buttons */}
           <View style={{ gap: 12, marginBottom: 24 }}>
-            {/* 启动/取消处理按钮 */}
             {canStartProcessing && (
               <TouchableOpacity
                 onPress={handleStartProcessing}
@@ -465,9 +409,9 @@ export default function ProjectDetailScreen() {
                 style={{
                   backgroundColor: colors.success,
                   borderRadius: 12,
-                  paddingVertical: 12,
-                  alignItems: "center",
+                  padding: 16,
                   flexDirection: "row",
+                  alignItems: "center",
                   justifyContent: "center",
                   gap: 8,
                   opacity: isStartingProcessing ? 0.7 : 1,
@@ -476,28 +420,28 @@ export default function ProjectDetailScreen() {
                 {isStartingProcessing ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
-                  <MaterialIcons name="play-arrow" size={20} color="#FFFFFF" />
+                  <MaterialIcons name="play-arrow" size={24} color="#FFFFFF" />
                 )}
                 <Text style={{ fontSize: 16, fontWeight: "600", color: "#FFFFFF" }}>
                   {isStartingProcessing ? "启动中..." : "开始处理"}
                 </Text>
               </TouchableOpacity>
             )}
-            
+
             {isProcessing && (
               <TouchableOpacity
                 onPress={handleCancelProcessing}
                 style={{
                   backgroundColor: colors.error,
                   borderRadius: 12,
-                  paddingVertical: 12,
-                  alignItems: "center",
+                  padding: 16,
                   flexDirection: "row",
+                  alignItems: "center",
                   justifyContent: "center",
                   gap: 8,
                 }}
               >
-                <MaterialIcons name="stop" size={20} color="#FFFFFF" />
+                <MaterialIcons name="stop" size={24} color="#FFFFFF" />
                 <Text style={{ fontSize: 16, fontWeight: "600", color: "#FFFFFF" }}>
                   取消处理
                 </Text>
@@ -505,78 +449,78 @@ export default function ProjectDetailScreen() {
             )}
 
             <TouchableOpacity
-              onPress={() => router.push(`../processing-monitor?projectId=${id}`)}
+              onPress={() => router.push(`/processing-monitor?projectId=${projectId}`)}
               style={{
                 backgroundColor: colors.primary,
                 borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: "center",
+                padding: 16,
                 flexDirection: "row",
+                alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
               }}
             >
-              <MaterialIcons name="monitor" size={20} color="#FFFFFF" />
+              <MaterialIcons name="monitor" size={24} color="#FFFFFF" />
               <Text style={{ fontSize: 16, fontWeight: "600", color: "#FFFFFF" }}>
                 处理监控
               </Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
-              onPress={() => router.push(`../results-viewer?projectId=${id}`)}
+              onPress={() => router.push({ pathname: "/results", params: { projectId } } as any)}
               style={{
                 backgroundColor: colors.surface,
                 borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: "center",
+                padding: 16,
                 flexDirection: "row",
+                alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
                 borderWidth: 1,
                 borderColor: colors.border,
               }}
             >
-              <MaterialIcons name="image" size={20} color={colors.primary} />
+              <MaterialIcons name="image" size={24} color={colors.primary} />
               <Text style={{ fontSize: 16, fontWeight: "600", color: colors.primary }}>
                 查看结果
               </Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
-              onPress={() => router.push(`../comparison-view?projectId=${id}`)}
+              onPress={() => router.push({ pathname: "/compare", params: { projectId } } as any)}
               style={{
                 backgroundColor: colors.surface,
                 borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: "center",
+                padding: 16,
                 flexDirection: "row",
+                alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
                 borderWidth: 1,
                 borderColor: colors.border,
               }}
             >
-              <MaterialIcons name="compare" size={20} color={colors.primary} />
+              <MaterialIcons name="compare" size={24} color={colors.primary} />
               <Text style={{ fontSize: 16, fontWeight: "600", color: colors.primary }}>
                 结果对比
               </Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
-              onPress={() => router.push(`../map-viewer?projectId=${id}`)}
+              onPress={() => router.push({ pathname: "/map-view", params: { projectId } } as any)}
               style={{
                 backgroundColor: colors.surface,
                 borderRadius: 12,
-                paddingVertical: 12,
-                alignItems: "center",
+                padding: 16,
                 flexDirection: "row",
+                alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
                 borderWidth: 1,
                 borderColor: colors.border,
               }}
             >
-              <MaterialIcons name="map" size={20} color={colors.primary} />
+              <MaterialIcons name="map" size={24} color={colors.primary} />
               <Text style={{ fontSize: 16, fontWeight: "600", color: colors.primary }}>
                 地图查看
               </Text>

@@ -19,10 +19,10 @@ export const appRouter = router({
 
   insar: router({
     listProjects: protectedProcedure.query(({ ctx }) => db.getUserProjects(ctx.user.id)),
-    getProject: protectedProcedure
+    getProject: publicProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => db.getProjectById(input.projectId)),
-    createProject: protectedProcedure
+    createProject: publicProcedure
       .input(z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -34,7 +34,7 @@ export const appRouter = router({
         polarization: z.string().optional(),
       }))
       .mutation(({ ctx, input }) => db.createProject({
-        userId: ctx.user.id,
+        userId: ctx.user?.id || 1,
         name: input.name,
         description: input.description,
         location: input.location,

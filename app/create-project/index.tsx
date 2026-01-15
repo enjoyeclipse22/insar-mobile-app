@@ -6,6 +6,9 @@ import { useState, useCallback } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { trpc } from "@/lib/trpc";
 import { RealMapSelector } from "@/components/real-map-selector";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const PROJECTS_STORAGE_KEY = "insar_projects";
 
 // 地图区域选择组件
 function MapAreaSelector({
@@ -258,8 +261,18 @@ export default function CreateProjectScreen() {
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState("");
   const [bounds, setBounds] = useState({ north: 38.5, south: 36.5, east: 38.0, west: 35.5 });
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  // 默认时间范围：最近 3 个月
+  const getDefaultDates = () => {
+    const today = new Date();
+    const endDate = today.toISOString().split('T')[0];
+    const threeMonthsAgo = new Date(today);
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const startDate = threeMonthsAgo.toISOString().split('T')[0];
+    return { startDate, endDate };
+  };
+  const defaultDates = getDefaultDates();
+  const [startDate, setStartDate] = useState(defaultDates.startDate);
+  const [endDate, setEndDate] = useState(defaultDates.endDate);
   const [satellite, setSatellite] = useState("S1A");
   const [orbit, setOrbit] = useState<"ascending" | "descending">("ascending");
   const [polarization, setPolarization] = useState("VV");
@@ -269,12 +282,8 @@ export default function CreateProjectScreen() {
   const createProjectMutation = trpc.insar.createProject.useMutation({
     onSuccess: (data) => {
       setIsCreating(false);
-      Alert.alert("成功", "项目创建成功！", [
-        {
-          text: "确定",
-          onPress: () => router.replace(`/project/${data.id}`),
-        },
-      ]);
+      // 直接跳转到项目详情页，不显示弹窗
+      router.replace(`/project/${data.id}`);
     },
     onError: (error) => {
       setIsCreating(false);
@@ -325,7 +334,12 @@ export default function CreateProjectScreen() {
     // 构建位置描述，包含边界坐标
     const locationWithBounds = `${location} (${bounds.south.toFixed(2)}°N-${bounds.north.toFixed(2)}°N, ${bounds.west.toFixed(2)}°E-${bounds.east.toFixed(2)}°E)`;
     
-    createProjectMutation.mutate({
+    // 生成本地项目 ID
+    const localId = Date.now();
+    
+    // 创建项目数据
+    const projectData = {
+      id: localId,
       name: projectName,
       description: `InSAR processing project for ${location}`,
       location: locationWithBounds,
@@ -334,7 +348,26 @@ export default function CreateProjectScreen() {
       satellite,
       orbitDirection: orbit,
       polarization,
-    });
+      status: "created",
+      progress: 0,
+      createdAt: new Date().toISOString(),
+      bounds,
+    };
+    
+    try {
+      // 保存到本地存储
+      const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+      const projects = stored ? JSON.parse(stored) : [];
+      projects.push(projectData);
+      await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+      
+      setIsCreating(false);
+      // 跳转到项目详情页
+      router.replace(`/project/${localId}`);
+    } catch (error) {
+      setIsCreating(false);
+      Alert.alert("错误", `创建项目失败: ${error}`);
+    }
   };
 
   const renderStep = () => {

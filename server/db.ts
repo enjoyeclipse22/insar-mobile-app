@@ -117,8 +117,13 @@ export async function createProject(data: any) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  await db.insert(insarProjects).values(data);
-  return data.id || null;
+  // 插入数据，让数据库自动生成 ID
+  const result = await db.insert(insarProjects).values(data);
+  
+  // 获取插入后的 ID
+  const insertId = result[0].insertId;
+  
+  return { id: insertId, ...data };
 }
 
 export async function updateProject(projectId: number, data: any) {

@@ -1,40 +1,58 @@
-import { ScrollView, Text, View, TouchableOpacity, FlatList } from "react-native";
+import { ScrollView, Text, View, TouchableOpacity, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 interface Project {
-  id: string;
+  id: number;
   name: string;
   location: string;
-  status: "processing" | "completed" | "failed";
+  status: string;
   createdAt: string;
   progress: number;
 }
 
+const PROJECTS_STORAGE_KEY = "insar_projects";
+
 export default function HomeScreen() {
   const router = useRouter();
   const colors = useColors();
-  const [recentProjects, setRecentProjects] = useState<Project[]>([
-    {
-      id: "1",
-      name: "Turkey Earthquake 2023",
-      location: "Central Turkey",
-      status: "completed",
-      createdAt: "2024-01-10",
-      progress: 100,
-    },
-    {
-      id: "2",
-      name: "Volcano Monitoring",
-      location: "Ecuador",
-      status: "processing",
-      createdAt: "2024-01-12",
-      progress: 65,
-    },
-  ]);
+  const [recentProjects, setRecentProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // 从本地存储加载项目
+  const loadProjects = useCallback(async () => {
+    try {
+      const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (stored) {
+        const projects = JSON.parse(stored);
+        // 按创建时间倒序排列
+        projects.sort((a: Project, b: Project) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        setRecentProjects(projects);
+      }
+    } catch (error) {
+      console.error("Failed to load projects:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // 页面获得焦点时重新加载数据
+  useFocusEffect(
+    useCallback(() => {
+      loadProjects();
+    }, [loadProjects])
+  );
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -49,7 +67,7 @@ export default function HomeScreen() {
     }
   };
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string): "check-circle" | "hourglass-empty" | "error" | "help" => {
     switch (status) {
       case "completed":
         return "check-circle";
@@ -70,8 +88,19 @@ export default function HomeScreen() {
         return "处理中";
       case "failed":
         return "失败";
+      case "created":
+        return "待处理";
       default:
         return "未知";
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("zh-CN");
+    } catch {
+      return dateString;
     }
   };
 
@@ -94,7 +123,7 @@ export default function HomeScreen() {
             {project.name}
           </Text>
           <Text style={{ fontSize: 13, color: colors.muted, marginBottom: 8 }}>
-            📍 {project.location}
+            📍 {project.location || "未指定位置"}
           </Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <MaterialIcons name={getStatusIcon(project.status)} size={14} color={getStatusColor(project.status)} />
@@ -105,7 +134,7 @@ export default function HomeScreen() {
         </View>
         <View style={{ alignItems: "flex-end" }}>
           <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
-            {project.createdAt}
+            {formatDate(project.createdAt)}
           </Text>
           <Text style={{ fontSize: 14, fontWeight: "600", color: colors.primary }}>
             {project.progress}%
@@ -217,8 +246,23 @@ export default function HomeScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-            {recentProjects.length > 0 ? (
-              recentProjects.slice(0, 3).map(renderProjectCard)
+            {isLoading ? (
+              <View
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 12,
+                  padding: 24,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ fontSize: 14, color: colors.muted, marginTop: 8 }}>
+                  加载中...
+                </Text>
+              </View>
+            ) : recentProjects.length > 0 ? (
+              recentProjects.slice(0, 5).map(renderProjectCard)
             ) : (
               <View
                 style={{
@@ -231,7 +275,7 @@ export default function HomeScreen() {
               >
                 <MaterialIcons name="inbox" size={40} color={colors.muted} />
                 <Text style={{ fontSize: 14, color: colors.muted, marginTop: 8 }}>
-                  暂无项目
+                  暂无项目，点击上方按钮创建
                 </Text>
               </View>
             )}

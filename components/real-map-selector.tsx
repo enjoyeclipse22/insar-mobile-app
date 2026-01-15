@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions, Modal, ActivityIndicator } from "react-native";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, Platform, Dimensions, Modal, ActivityIndicator, Alert } from "react-native";
 import { Image } from "expo-image";
 import { useColors } from "@/hooks/use-colors";
+import { cacheTile, getCachedTile, getCacheStats, clearAllCache, formatSize, precacheArea } from "@/lib/tile-cache";
 
 interface Bounds {
   north: number;
@@ -146,6 +147,13 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
   const [touchCount, setTouchCount] = useState(0);
   const [initialPinchDistance, setInitialPinchDistance] = useState<number | null>(null);
   const [initialZoom, setInitialZoom] = useState(5);
+  
+  // 缓存相关状态
+  const [showCacheModal, setShowCacheModal] = useState(false);
+  const [cacheStats, setCacheStats] = useState<{ totalTiles: number; totalSize: number } | null>(null);
+  const [isPrecaching, setIsPrecaching] = useState(false);
+  const [precacheProgress, setPrecacheProgress] = useState({ current: 0, total: 0 });
+  const [cachedTileUrls, setCachedTileUrls] = useState<Record<string, string>>({});
 
   // 更新中心点当边界变化时
   useEffect(() => {
@@ -244,6 +252,69 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     return mapLayers[mapLayer].getTileUrl(x, y, z);
   }, [mapLayer]);
 
+  // 加载缓存统计
+  const loadCacheStats = useCallback(async () => {
+    const stats = await getCacheStats();
+    setCacheStats({ totalTiles: stats.totalTiles, totalSize: stats.totalSize });
+  }, []);
+
+  // 预缓存当前区域
+  const handlePrecacheArea = useCallback(async () => {
+    setIsPrecaching(true);
+    setPrecacheProgress({ current: 0, total: 0 });
+    
+    try {
+      // 缓存当前缩放级别和相邻级别的瓦片
+      const zoomLevels = [Math.max(1, zoom - 1), zoom, Math.min(18, zoom + 1)];
+      let totalCached = 0;
+      
+      for (const z of zoomLevels) {
+        const cached = await precacheArea(
+          bounds,
+          z,
+          getTileUrl,
+          (current, total) => {
+            setPrecacheProgress({ current, total });
+          }
+        );
+        totalCached += cached;
+      }
+      
+      await loadCacheStats();
+      Alert.alert("缓存完成", `已缓存 ${totalCached} 个地图瓦片`);
+    } catch (error) {
+      Alert.alert("缓存失败", "无法缓存地图瓦片");
+    } finally {
+      setIsPrecaching(false);
+    }
+  }, [bounds, zoom, getTileUrl, loadCacheStats]);
+
+  // 清空缓存
+  const handleClearCache = useCallback(async () => {
+    Alert.alert(
+      "确认清空",
+      "确定要清空所有地图缓存吗？",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "清空",
+          style: "destructive",
+          onPress: async () => {
+            await clearAllCache();
+            setCachedTileUrls({});
+            await loadCacheStats();
+            Alert.alert("已清空", "地图缓存已清空");
+          },
+        },
+      ]
+    );
+  }, [loadCacheStats]);
+
+  // 组件加载时加载缓存统计
+  useEffect(() => {
+    loadCacheStats();
+  }, [loadCacheStats]);
+
   // 计算需要显示的瓦片
   const getTiles = useCallback(() => {
     const tiles: Array<{ x: number; y: number; url: string; left: number; top: number }> = [];
@@ -283,6 +354,20 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
     
     return tiles;
   }, [center, zoom, mapSize, getTileUrl]);
+
+  // 瓦片加载时自动缓存
+  useEffect(() => {
+    if (Platform.OS !== "web") {
+      const tiles = getTiles();
+      tiles.forEach(async (tile) => {
+        const cachedPath = await cacheTile(tile.url);
+        if (cachedPath) {
+          setCachedTileUrls((prev) => ({ ...prev, [tile.url]: cachedPath }));
+        }
+      });
+      loadCacheStats();
+    }
+  }, [center, zoom, mapLayer, getTiles, loadCacheStats]);
 
   // 像素坐标转经纬度
   const pixelToLonLat = useCallback((px: number, py: number): { lon: number; lat: number } => {
@@ -799,6 +884,21 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
           >
             <Text style={{ fontSize: 10, color: "#333" }}>➕ 标注</Text>
           </TouchableOpacity>
+
+          {/* 缓存按钮 */}
+          <TouchableOpacity
+            onPress={() => setShowCacheModal(true)}
+            style={{
+              backgroundColor: "rgba(255,255,255,0.95)",
+              borderRadius: 4,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={{ fontSize: 10, color: "#333" }}>
+              💾 {cacheStats ? `${cacheStats.totalTiles}` : "0"}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* 图层选择下拉菜单 */}
@@ -1181,6 +1281,141 @@ export function RealMapSelector({ bounds, onBoundsChange }: RealMapSelectorProps
                 <Text style={{ fontSize: 14, color: "#fff", fontWeight: "600" }}>添加</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 缓存管理弹窗 */}
+      <Modal
+        visible={showCacheModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCacheModal(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: colors.background,
+              borderRadius: 12,
+              padding: 20,
+              width: 300,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.3,
+              shadowRadius: 8,
+              elevation: 8,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "600", color: colors.foreground, marginBottom: 16 }}>
+              地图缓存管理
+            </Text>
+            
+            {/* 缓存统计 */}
+            <View
+              style={{
+                backgroundColor: colors.surface,
+                borderRadius: 8,
+                padding: 12,
+                marginBottom: 16,
+              }}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
+                <Text style={{ fontSize: 13, color: colors.muted }}>已缓存瓦片</Text>
+                <Text style={{ fontSize: 13, color: colors.foreground, fontWeight: "500" }}>
+                  {cacheStats?.totalTiles || 0} 个
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={{ fontSize: 13, color: colors.muted }}>缓存大小</Text>
+                <Text style={{ fontSize: 13, color: colors.foreground, fontWeight: "500" }}>
+                  {formatSize(cacheStats?.totalSize || 0)}
+                </Text>
+              </View>
+            </View>
+            
+            {/* 预缓存进度 */}
+            {isPrecaching && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ fontSize: 12, color: colors.muted, marginBottom: 8 }}>
+                  正在缓存... {precacheProgress.current}/{precacheProgress.total}
+                </Text>
+                <View
+                  style={{
+                    height: 4,
+                    backgroundColor: colors.surface,
+                    borderRadius: 2,
+                    overflow: "hidden",
+                  }}
+                >
+                  <View
+                    style={{
+                      height: "100%",
+                      width: `${precacheProgress.total > 0 ? (precacheProgress.current / precacheProgress.total) * 100 : 0}%`,
+                      backgroundColor: colors.primary,
+                    }}
+                  />
+                </View>
+              </View>
+            )}
+            
+            {/* 操作按钮 */}
+            <View style={{ gap: 10 }}>
+              <TouchableOpacity
+                onPress={handlePrecacheArea}
+                disabled={isPrecaching}
+                style={{
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  backgroundColor: isPrecaching ? colors.surface : colors.primary,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, color: isPrecaching ? colors.muted : "#fff", fontWeight: "600" }}>
+                  {isPrecaching ? "缓存中..." : "缓存当前区域"}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                onPress={handleClearCache}
+                disabled={isPrecaching}
+                style={{
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  backgroundColor: colors.surface,
+                  alignItems: "center",
+                  borderWidth: 1,
+                  borderColor: colors.error,
+                }}
+              >
+                <Text style={{ fontSize: 14, color: colors.error, fontWeight: "500" }}>
+                  清空所有缓存
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                onPress={() => setShowCacheModal(false)}
+                style={{
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  backgroundColor: colors.surface,
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ fontSize: 14, color: colors.foreground }}>关闭</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* 提示 */}
+            <Text style={{ fontSize: 11, color: colors.muted, marginTop: 12, textAlign: "center" }}>
+              缓存地图瓦片后可离线查看已访问区域
+            </Text>
           </View>
         </View>
       </Modal>
