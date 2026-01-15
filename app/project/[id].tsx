@@ -231,6 +231,25 @@ export default function ProjectDetailScreen() {
                 结果对比
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push(`../map-viewer?projectId=${id}`)}
+              style={{
+                backgroundColor: colors.surface,
+                borderRadius: 12,
+                paddingVertical: 12,
+                alignItems: "center",
+                flexDirection: "row",
+                justifyContent: "center",
+                gap: 8,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <MaterialIcons name="map" size={20} color={colors.primary} />
+              <Text style={{ fontSize: 16, fontWeight: "600", color: colors.primary }}>
+                地图查看
+              </Text>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </View>
