@@ -6,6 +6,7 @@ import {
   ScrollView,
   Alert,
   RefreshControl,
+  ActivityIndicator,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
@@ -15,8 +16,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSpring,
 } from "react-native-reanimated";
+import { trpc } from "@/lib/trpc";
 
 // 下载状态类型
 type DownloadStatus = "pending" | "downloading" | "paused" | "completed" | "failed";
@@ -53,66 +54,6 @@ interface CacheInfo {
   total_size_formatted: string;
   files: CachedFile[];
 }
-
-// 模拟数据
-const mockDownloads: DownloadItem[] = [
-  {
-    file_id: "dl001",
-    filename: "S1A_IW_SLC__1SDV_20230206T034512.zip",
-    total_size: 4500000000,
-    downloaded_size: 2250000000,
-    progress_percent: 50,
-    speed: 5242880,
-    speed_formatted: "5.0 MB/s",
-    eta: 450,
-    eta_formatted: "7m 30s",
-    status: "downloading",
-  },
-  {
-    file_id: "dl002",
-    filename: "S1A_IW_SLC__1SDV_20230218T034512.zip",
-    total_size: 4200000000,
-    downloaded_size: 0,
-    progress_percent: 0,
-    speed: 0,
-    speed_formatted: "0 B/s",
-    eta: 0,
-    eta_formatted: "--",
-    status: "pending",
-  },
-];
-
-const mockCacheInfo: CacheInfo = {
-  total_files: 3,
-  total_size: 12500000000,
-  total_size_formatted: "11.64 GB",
-  files: [
-    {
-      path: "/data/sentinel1/S1A_IW_SLC__1SDV_20230201T034512.zip",
-      filename: "S1A_IW_SLC__1SDV_20230201T034512.zip",
-      size: 4500000000,
-      size_formatted: "4.19 GB",
-      added_at: "2024-01-10T10:30:00Z",
-      metadata: { platform: "Sentinel-1A", beam_mode: "IW" },
-    },
-    {
-      path: "/data/sentinel1/S1A_IW_SLC__1SDV_20230213T034512.zip",
-      filename: "S1A_IW_SLC__1SDV_20230213T034512.zip",
-      size: 4200000000,
-      size_formatted: "3.91 GB",
-      added_at: "2024-01-10T14:20:00Z",
-      metadata: { platform: "Sentinel-1A", beam_mode: "IW" },
-    },
-    {
-      path: "/data/dem/srtm_turkey.tif",
-      filename: "srtm_turkey.tif",
-      size: 3800000000,
-      size_formatted: "3.54 GB",
-      added_at: "2024-01-09T09:15:00Z",
-      metadata: { type: "DEM", source: "SRTM" },
-    },
-  ],
-};
 
 // 进度条组件
 function ProgressBar({
@@ -184,7 +125,7 @@ function DownloadItemCard({
   onCancel: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
-  const getStatusIcon = () => {
+  const getStatusIcon = (): "check-circle" | "error" | "pause-circle-filled" | "downloading" | "schedule" => {
     switch (item.status) {
       case "completed":
         return "check-circle";
@@ -240,7 +181,7 @@ function DownloadItemCard({
         }}
       >
         <MaterialIcons
-          name={getStatusIcon() as any}
+          name={getStatusIcon()}
           size={24}
           color={getStatusColor()}
         />
@@ -376,7 +317,7 @@ function CachedFileCard({
     });
   };
 
-  const getFileIcon = () => {
+  const getFileIcon = (): "folder-zip" | "image" | "insert-drive-file" => {
     if (file.filename.endsWith(".zip")) return "folder-zip";
     if (file.filename.endsWith(".tif") || file.filename.endsWith(".tiff"))
       return "image";
@@ -405,7 +346,7 @@ function CachedFileCard({
         }}
       >
         <MaterialIcons
-          name={getFileIcon() as any}
+          name={getFileIcon()}
           size={24}
           color={colors.primary}
         />
@@ -507,27 +448,15 @@ function StorageStats({
         style={{
           flexDirection: "row",
           justifyContent: "space-between",
-          marginTop: 12,
+          marginTop: 8,
         }}
       >
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 24, fontWeight: "700", color: colors.foreground }}>
-            {cacheInfo.total_files}
-          </Text>
-          <Text style={{ fontSize: 12, color: colors.muted }}>文件数</Text>
-        </View>
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 24, fontWeight: "700", color: colors.foreground }}>
-            {cacheInfo.total_size_formatted}
-          </Text>
-          <Text style={{ fontSize: 12, color: colors.muted }}>已使用</Text>
-        </View>
-        <View style={{ alignItems: "center" }}>
-          <Text style={{ fontSize: 24, fontWeight: "700", color: colors.foreground }}>
-            {usedPercent.toFixed(1)}%
-          </Text>
-          <Text style={{ fontSize: 12, color: colors.muted }}>使用率</Text>
-        </View>
+        <Text style={{ fontSize: 12, color: colors.muted }}>
+          {cacheInfo.total_files} 个文件
+        </Text>
+        <Text style={{ fontSize: 12, color: colors.muted }}>
+          已使用 {usedPercent.toFixed(1)}%
+        </Text>
       </View>
     </View>
   );
@@ -536,123 +465,164 @@ function StorageStats({
 export default function DataManagerScreen() {
   const router = useRouter();
   const colors = useColors();
+  const [activeTab, setActiveTab] = useState<"downloading" | "cached">("downloading");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [cacheInfo, setCacheInfo] = useState<CacheInfo>({
+    total_files: 0,
+    total_size: 0,
+    total_size_formatted: "0 B",
+    files: [],
+  });
 
-  const [activeTab, setActiveTab] = useState<"downloads" | "cache">("downloads");
-  const [downloads, setDownloads] = useState<DownloadItem[]>(mockDownloads);
-  const [cacheInfo, setCacheInfo] = useState<CacheInfo>(mockCacheInfo);
-  const [refreshing, setRefreshing] = useState(false);
+  // 获取下载列表
+  const { data: downloadsData, refetch: refetchDownloads, isLoading: downloadsLoading } = 
+    trpc.insar.getDownloads.useQuery(undefined, {
+      refetchInterval: activeTab === "downloading" ? 2000 : false, // 下载中时每2秒刷新
+    });
 
-  // 模拟下载进度更新
+  // 获取缓存信息
+  const { data: cacheData, refetch: refetchCache, isLoading: cacheLoading } = 
+    trpc.insar.getCacheInfo.useQuery();
+
+  // 启动下载
+  const startDownloadMutation = trpc.insar.startDownload.useMutation({
+    onSuccess: () => {
+      refetchDownloads();
+      Alert.alert("成功", "下载任务已启动");
+    },
+    onError: (error) => {
+      Alert.alert("错误", `启动下载失败: ${error.message}`);
+    },
+  });
+
+  // 暂停下载
+  const pauseDownloadMutation = trpc.insar.pauseDownload.useMutation({
+    onSuccess: () => {
+      refetchDownloads();
+    },
+    onError: (error) => {
+      Alert.alert("错误", `暂停下载失败: ${error.message}`);
+    },
+  });
+
+  // 恢复下载
+  const resumeDownloadMutation = trpc.insar.resumeDownload.useMutation({
+    onSuccess: () => {
+      refetchDownloads();
+    },
+    onError: (error) => {
+      Alert.alert("错误", `恢复下载失败: ${error.message}`);
+    },
+  });
+
+  // 取消下载
+  const cancelDownloadMutation = trpc.insar.cancelDownload.useMutation({
+    onSuccess: () => {
+      refetchDownloads();
+      Alert.alert("成功", "下载已取消");
+    },
+    onError: (error) => {
+      Alert.alert("错误", `取消下载失败: ${error.message}`);
+    },
+  });
+
+  // 删除缓存文件
+  const deleteCacheFileMutation = trpc.insar.deleteCacheFile.useMutation({
+    onSuccess: () => {
+      refetchCache();
+      Alert.alert("成功", "文件已删除");
+    },
+    onError: (error) => {
+      Alert.alert("错误", `删除文件失败: ${error.message}`);
+    },
+  });
+
+  // 清空缓存
+  const clearCacheMutation = trpc.insar.clearCache.useMutation({
+    onSuccess: () => {
+      refetchCache();
+      Alert.alert("成功", "缓存已清空");
+    },
+    onError: (error) => {
+      Alert.alert("错误", `清空缓存失败: ${error.message}`);
+    },
+  });
+
+  // 更新下载列表
   useEffect(() => {
-    const interval = setInterval(() => {
-      setDownloads((prev) =>
-        prev.map((item) => {
-          if (item.status === "downloading") {
-            const newDownloaded = Math.min(
-              item.downloaded_size + 5242880, // 5MB/s
-              item.total_size
-            );
-            const newProgress = (newDownloaded / item.total_size) * 100;
-            const remaining = item.total_size - newDownloaded;
-            const eta = Math.ceil(remaining / 5242880);
+    if (downloadsData) {
+      setDownloads(downloadsData as DownloadItem[]);
+    }
+  }, [downloadsData]);
 
-            return {
-              ...item,
-              downloaded_size: newDownloaded,
-              progress_percent: newProgress,
-              eta,
-              eta_formatted:
-                eta < 60
-                  ? `${eta}s`
-                  : eta < 3600
-                  ? `${Math.floor(eta / 60)}m ${eta % 60}s`
-                  : `${Math.floor(eta / 3600)}h ${Math.floor((eta % 3600) / 60)}m`,
-              status: newProgress >= 100 ? "completed" : "downloading",
-            };
-          }
-          return item;
-        })
-      );
-    }, 1000);
+  // 更新缓存信息
+  useEffect(() => {
+    if (cacheData) {
+      setCacheInfo(cacheData as CacheInfo);
+    }
+  }, [cacheData]);
 
-    return () => clearInterval(interval);
-  }, []);
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await Promise.all([refetchDownloads(), refetchCache()]);
+    setIsRefreshing(false);
+  }, [refetchDownloads, refetchCache]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    // 模拟刷新
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 1000);
-  }, []);
+  const handlePauseDownload = (fileId: string) => {
+    pauseDownloadMutation.mutate({ fileId });
+  };
 
-  const handlePause = (fileId: string) => {
-    setDownloads((prev) =>
-      prev.map((item) =>
-        item.file_id === fileId ? { ...item, status: "paused" } : item
-      )
+  const handleResumeDownload = (fileId: string) => {
+    resumeDownloadMutation.mutate({ fileId });
+  };
+
+  const handleCancelDownload = (fileId: string) => {
+    Alert.alert(
+      "取消下载",
+      "确定要取消此下载任务吗？",
+      [
+        { text: "否", style: "cancel" },
+        {
+          text: "是",
+          style: "destructive",
+          onPress: () => cancelDownloadMutation.mutate({ fileId }),
+        },
+      ]
     );
   };
 
-  const handleResume = (fileId: string) => {
-    setDownloads((prev) =>
-      prev.map((item) =>
-        item.file_id === fileId ? { ...item, status: "downloading" } : item
-      )
+  const handleDeleteFile = (filePath: string, filename: string) => {
+    Alert.alert(
+      "删除文件",
+      `确定要删除 "${filename}" 吗？`,
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "删除",
+          style: "destructive",
+          onPress: () => deleteCacheFileMutation.mutate({ filePath }),
+        },
+      ]
     );
-  };
-
-  const handleCancel = (fileId: string) => {
-    Alert.alert("取消下载", "确定要取消此下载吗？", [
-      { text: "取消", style: "cancel" },
-      {
-        text: "确定",
-        style: "destructive",
-        onPress: () => {
-          setDownloads((prev) => prev.filter((item) => item.file_id !== fileId));
-        },
-      },
-    ]);
-  };
-
-  const handleDeleteFile = (filename: string) => {
-    Alert.alert("删除文件", `确定要删除 ${filename} 吗？`, [
-      { text: "取消", style: "cancel" },
-      {
-        text: "删除",
-        style: "destructive",
-        onPress: () => {
-          setCacheInfo((prev) => ({
-            ...prev,
-            total_files: prev.total_files - 1,
-            files: prev.files.filter((f) => f.filename !== filename),
-            total_size:
-              prev.total_size -
-              (prev.files.find((f) => f.filename === filename)?.size || 0),
-            total_size_formatted: "更新中...",
-          }));
-        },
-      },
-    ]);
   };
 
   const handleClearCache = () => {
-    Alert.alert("清空缓存", "确定要删除所有缓存文件吗？此操作不可撤销。", [
-      { text: "取消", style: "cancel" },
-      {
-        text: "清空",
-        style: "destructive",
-        onPress: () => {
-          setCacheInfo({
-            total_files: 0,
-            total_size: 0,
-            total_size_formatted: "0 B",
-            files: [],
-          });
+    Alert.alert(
+      "清空缓存",
+      "确定要清空所有缓存文件吗？此操作不可恢复。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "清空",
+          style: "destructive",
+          onPress: () => clearCacheMutation.mutate(),
         },
-      },
-    ]);
+      ]
+    );
   };
+
+  const isLoading = downloadsLoading || cacheLoading;
 
   return (
     <ScreenContainer className="p-0">
@@ -661,9 +631,9 @@ export default function DataManagerScreen() {
         <View
           style={{
             backgroundColor: colors.primary,
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            paddingTop: 8,
+            paddingHorizontal: 24,
+            paddingVertical: 16,
+            paddingTop: 12,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
@@ -672,7 +642,7 @@ export default function DataManagerScreen() {
           <TouchableOpacity onPress={() => router.back()}>
             <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={{ fontSize: 18, fontWeight: "700", color: "#FFFFFF" }}>
+          <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
             数据管理
           </Text>
           <TouchableOpacity onPress={handleClearCache}>
@@ -684,20 +654,19 @@ export default function DataManagerScreen() {
         <View
           style={{
             flexDirection: "row",
-            backgroundColor: colors.surface,
-            padding: 4,
-            margin: 16,
-            borderRadius: 12,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            gap: 12,
           }}
         >
           <TouchableOpacity
-            onPress={() => setActiveTab("downloads")}
+            onPress={() => setActiveTab("downloading")}
             style={{
               flex: 1,
               paddingVertical: 10,
               borderRadius: 8,
               backgroundColor:
-                activeTab === "downloads" ? colors.primary : "transparent",
+                activeTab === "downloading" ? colors.primary : colors.surface,
               alignItems: "center",
             }}
           >
@@ -705,20 +674,20 @@ export default function DataManagerScreen() {
               style={{
                 fontSize: 14,
                 fontWeight: "600",
-                color: activeTab === "downloads" ? "#FFFFFF" : colors.muted,
+                color: activeTab === "downloading" ? "#FFFFFF" : colors.muted,
               }}
             >
               下载中
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setActiveTab("cache")}
+            onPress={() => setActiveTab("cached")}
             style={{
               flex: 1,
               paddingVertical: 10,
               borderRadius: 8,
               backgroundColor:
-                activeTab === "cache" ? colors.primary : "transparent",
+                activeTab === "cached" ? colors.primary : colors.surface,
               alignItems: "center",
             }}
           >
@@ -726,7 +695,7 @@ export default function DataManagerScreen() {
               style={{
                 fontSize: 14,
                 fontWeight: "600",
-                color: activeTab === "cache" ? "#FFFFFF" : colors.muted,
+                color: activeTab === "cached" ? "#FFFFFF" : colors.muted,
               }}
             >
               已缓存
@@ -736,19 +705,25 @@ export default function DataManagerScreen() {
 
         {/* Content */}
         <ScrollView
-          style={{ flex: 1, paddingHorizontal: 16 }}
+          style={{ flex: 1, paddingHorizontal: 24 }}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
           }
         >
-          {activeTab === "downloads" ? (
+          {isLoading ? (
+            <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingTop: 48 }}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={{ marginTop: 16, color: colors.muted }}>加载中...</Text>
+            </View>
+          ) : activeTab === "downloading" ? (
             <>
               {downloads.length === 0 ? (
                 <View
                   style={{
-                    alignItems: "center",
+                    flex: 1,
                     justifyContent: "center",
-                    paddingVertical: 60,
+                    alignItems: "center",
+                    paddingTop: 48,
                   }}
                 >
                   <MaterialIcons
@@ -765,15 +740,25 @@ export default function DataManagerScreen() {
                   >
                     暂无下载任务
                   </Text>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      color: colors.muted,
+                      marginTop: 8,
+                      textAlign: "center",
+                    }}
+                  >
+                    创建新项目并开始处理后，数据将自动下载
+                  </Text>
                 </View>
               ) : (
                 downloads.map((item) => (
                   <DownloadItemCard
                     key={item.file_id}
                     item={item}
-                    onPause={() => handlePause(item.file_id)}
-                    onResume={() => handleResume(item.file_id)}
-                    onCancel={() => handleCancel(item.file_id)}
+                    onPause={() => handlePauseDownload(item.file_id)}
+                    onResume={() => handleResumeDownload(item.file_id)}
+                    onCancel={() => handleCancelDownload(item.file_id)}
                     colors={colors}
                   />
                 ))
@@ -782,13 +767,13 @@ export default function DataManagerScreen() {
           ) : (
             <>
               <StorageStats cacheInfo={cacheInfo} colors={colors} />
-
               {cacheInfo.files.length === 0 ? (
                 <View
                   style={{
-                    alignItems: "center",
+                    flex: 1,
                     justifyContent: "center",
-                    paddingVertical: 60,
+                    alignItems: "center",
+                    paddingTop: 48,
                   }}
                 >
                   <MaterialIcons
@@ -809,17 +794,15 @@ export default function DataManagerScreen() {
               ) : (
                 cacheInfo.files.map((file, index) => (
                   <CachedFileCard
-                    key={index}
+                    key={file.path || index}
                     file={file}
-                    onDelete={() => handleDeleteFile(file.filename)}
+                    onDelete={() => handleDeleteFile(file.path, file.filename)}
                     colors={colors}
                   />
                 ))
               )}
             </>
           )}
-
-          <View style={{ height: 32 }} />
         </ScrollView>
       </View>
     </ScreenContainer>

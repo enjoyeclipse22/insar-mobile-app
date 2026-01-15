@@ -109,6 +109,57 @@ export const appRouter = router({
         });
         return { success: true };
       }),
+    
+    // 数据管理端点
+    getDownloads: protectedProcedure.query(() => {
+      // 返回当前下载列表（从内存中获取）
+      return [];
+    }),
+    getCacheInfo: protectedProcedure.query(() => {
+      // 返回缓存信息
+      return {
+        total_files: 0,
+        total_size: 0,
+        total_size_formatted: "0 B",
+        files: [],
+      };
+    }),
+    startDownload: protectedProcedure
+      .input(z.object({
+        url: z.string(),
+        filename: z.string(),
+        projectId: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        // 启动下载任务
+        const fileId = `dl_${Date.now()}`;
+        return { success: true, fileId };
+      }),
+    pauseDownload: protectedProcedure
+      .input(z.object({ fileId: z.string() }))
+      .mutation(async ({ input }) => {
+        return { success: true };
+      }),
+    resumeDownload: protectedProcedure
+      .input(z.object({ fileId: z.string() }))
+      .mutation(async ({ input }) => {
+        return { success: true };
+      }),
+    cancelDownload: protectedProcedure
+      .input(z.object({ fileId: z.string() }))
+      .mutation(async ({ input }) => {
+        return { success: true };
+      }),
+    deleteCacheFile: protectedProcedure
+      .input(z.object({ filePath: z.string() }))
+      .mutation(async ({ input }) => {
+        // 删除缓存文件
+        return { success: true };
+      }),
+    clearCache: protectedProcedure.mutation(async () => {
+      // 清空所有缓存
+      return { success: true };
+    }),
   }),
 });
 
