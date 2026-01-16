@@ -1010,3 +1010,13 @@
   - 使用主题色作为刷新指示器颜色
 - [x] 确保用户能够实时同步最新数据
 
+
+## 代码清理 - 删除未使用的后端代码
+- [x] 分析 App 交互逻辑和后端 API 调用
+- [x] 审查后端代码结构
+- [x] 识别并删除未使用的代码
+  - 删除文件: processing-routes.ts, websocket-server.ts, websocket-client.ts, python-client.ts, task-queue.ts, insar-processor.ts
+  - 删除测试文件: asf-api.test.ts, asf-token.test.ts, core-features.test.ts, download-service.test.ts, insar-processor.test.ts, python-client.test.ts, websocket-client.test.ts
+  - 清理 routers.ts 中未使用的端点
+- [x] 验证删除后功能正常
+

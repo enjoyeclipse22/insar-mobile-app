@@ -4,7 +4,6 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import * as db from "./db";
-import { startProjectProcessing, getTaskStatus } from "./task-queue";
 import { realInsarRouter } from "./real-insar-routes";
 
 export const appRouter = router({
@@ -20,14 +19,18 @@ export const appRouter = router({
   }),
 
   insar: router({
+    // 项目列表
     listProjects: publicProcedure.query(async ({ ctx }) => {
-      // 如果用户已登录，返回该用户的项目；否则返回所有项目（用于演示）
       const userId = ctx.user?.id || 1;
       return db.getUserProjects(userId);
     }),
+    
+    // 获取单个项目
     getProject: publicProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => db.getProjectById(input.projectId)),
+    
+    // 创建项目
     createProject: publicProcedure
       .input(z.object({
         name: z.string(),
@@ -52,6 +55,8 @@ export const appRouter = router({
         status: "created",
         progress: 0,
       })),
+    
+    // 更新项目
     updateProject: publicProcedure
       .input(z.object({
         projectId: z.number(),
@@ -80,65 +85,14 @@ export const appRouter = router({
         if (input.progress !== undefined) updateData.progress = input.progress;
         return db.updateProject(input.projectId, updateData);
       }),
+    
+    // 删除项目
     deleteProject: publicProcedure
       .input(z.object({ projectId: z.number() }))
       .mutation(({ input }) => db.deleteProject(input.projectId)),
-    getSteps: protectedProcedure
-      .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => db.getProjectSteps(input.projectId)),
-    getResults: protectedProcedure
-      .input(z.object({ projectId: z.number() }))
-      .query(({ input }) => db.getProjectResults(input.projectId)),
-    getLogs: protectedProcedure
-      .input(z.object({ projectId: z.number(), limit: z.number().optional() }))
-      .query(({ input }) => db.getProjectLogs(input.projectId, input.limit)),
-    startProcessing: protectedProcedure
-      .input(z.object({
-        projectId: z.number(),
-        startDate: z.string(),
-        endDate: z.string(),
-        satellite: z.string(),
-        orbitDirection: z.enum(["ascending", "descending"]),
-        polarization: z.string(),
-        coherenceThreshold: z.number().optional(),
-        outputResolution: z.number().optional(),
-      }))
-      .mutation(async ({ input }) => {
-        await db.updateProject(input.projectId, { status: "processing", progress: 0 });
-        const taskId = await startProjectProcessing(input.projectId, {
-          projectId: input.projectId,
-          startDate: input.startDate,
-          endDate: input.endDate,
-          satellite: input.satellite,
-          orbitDirection: input.orbitDirection,
-          polarization: input.polarization,
-          coherenceThreshold: input.coherenceThreshold || 0.4,
-          outputResolution: input.outputResolution || 30,
-        });
-        return { success: true, taskId };
-      }),
-    getTaskStatus: protectedProcedure
-      .input(z.object({ taskId: z.string() }))
-      .query(({ input }) => getTaskStatus(input.taskId) || { error: "Task not found" }),
-    cancelProcessing: protectedProcedure
-      .input(z.object({ projectId: z.number() }))
-      .mutation(async ({ input }) => {
-        await db.updateProject(input.projectId, { status: "failed" });
-        await db.addProcessingLog({
-          projectId: input.projectId,
-          logLevel: "warning",
-          message: "Processing cancelled by user",
-        });
-        return { success: true };
-      }),
     
     // 数据管理端点
-    getDownloads: protectedProcedure.query(() => {
-      // 返回当前下载列表（从内存中获取）
-      return [];
-    }),
-    getCacheInfo: protectedProcedure.query(() => {
-      // 返回缓存信息
+    getCacheInfo: publicProcedure.query(() => {
       return {
         total_files: 0,
         total_size: 0,
@@ -146,40 +100,14 @@ export const appRouter = router({
         files: [],
       };
     }),
-    startDownload: protectedProcedure
-      .input(z.object({
-        url: z.string(),
-        filename: z.string(),
-        projectId: z.number().optional(),
-      }))
-      .mutation(async ({ input }) => {
-        // 启动下载任务
-        const fileId = `dl_${Date.now()}`;
-        return { success: true, fileId };
-      }),
-    pauseDownload: protectedProcedure
-      .input(z.object({ fileId: z.string() }))
-      .mutation(async ({ input }) => {
-        return { success: true };
-      }),
-    resumeDownload: protectedProcedure
-      .input(z.object({ fileId: z.string() }))
-      .mutation(async ({ input }) => {
-        return { success: true };
-      }),
-    cancelDownload: protectedProcedure
-      .input(z.object({ fileId: z.string() }))
-      .mutation(async ({ input }) => {
-        return { success: true };
-      }),
-    deleteCacheFile: protectedProcedure
+    
+    deleteCacheFile: publicProcedure
       .input(z.object({ filePath: z.string() }))
       .mutation(async ({ input }) => {
-        // 删除缓存文件
         return { success: true };
       }),
-    clearCache: protectedProcedure.mutation(async () => {
-      // 清空所有缓存
+    
+    clearCache: publicProcedure.mutation(async () => {
       return { success: true };
     }),
   }),
