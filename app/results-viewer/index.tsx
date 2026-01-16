@@ -3,8 +3,9 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Image as ExpoImage } from "expo-image";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 interface ProcessingResult {
   id: number;
@@ -80,12 +81,60 @@ export default function ResultsViewerScreen() {
     },
   ];
 
+  const [dbResults, setDbResults] = useState<ProcessingResult[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // 从数据库加载处理结果
+  const loadDatabaseResults = useCallback(async () => {
+    const numericId = parseInt(projectId, 10);
+    if (isNaN(numericId)) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const apiBase = getApiBaseUrl();
+      const response = await fetch(
+        `${apiBase}/api/trpc/realInsar.getProjectResults?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`
+      );
+      const data = await response.json();
+      
+      if (data?.result?.data?.json?.success && data.result.data.json.results.length > 0) {
+        const fetchedResults: ProcessingResult[] = data.result.data.json.results.map((r: any) => ({
+          id: r.id,
+          resultType: r.resultType,
+          fileName: r.fileName,
+          fileSize: r.fileSize || 0,
+          format: r.format || "PNG",
+          minValue: r.minValue,
+          maxValue: r.maxValue,
+          meanValue: r.meanValue,
+          createdAt: r.createdAt,
+          imagePath: r.fileUrl,
+        }));
+        setDbResults(fetchedResults);
+      }
+    } catch (error) {
+      console.error("Failed to load database results:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId]);
+
+  // 加载数据库结果
+  useEffect(() => {
+    loadDatabaseResults();
+  }, [loadDatabaseResults]);
+
+  // 合并默认结果和数据库结果
+  const allResults = dbResults.length > 0 ? dbResults : results;
+
   // 默认选中第一个结果
   useEffect(() => {
-    if (results.length > 0 && !selectedResult) {
-      setSelectedResult(results[0]);
+    if (allResults.length > 0 && !selectedResult) {
+      setSelectedResult(allResults[0]);
     }
-  }, []);
+  }, [allResults]);
 
   const getResultLabel = (type: string) => {
     const labels: Record<string, string> = {
@@ -461,7 +510,7 @@ export default function ResultsViewerScreen() {
             <Text style={{ fontSize: 14, fontWeight: "600", color: colors.foreground, marginBottom: 12 }}>
               全部结果
             </Text>
-            {results.map(renderResult)}
+            {allResults.map(renderResult)}
           </View>
         </ScrollView>
       </View>

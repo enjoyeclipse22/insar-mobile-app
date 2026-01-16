@@ -92,6 +92,55 @@ export default function ProjectDetailScreen() {
   const startRealProcessingMutation = trpc.realInsar.startProcessing.useMutation();
   const cancelRealProcessingMutation = trpc.realInsar.cancelProcessing.useMutation();
 
+  // 从数据库加载处理步骤和日志
+  const loadDatabaseData = useCallback(async () => {
+    const numericId = parseInt(projectId, 10);
+    if (isNaN(numericId)) return;
+
+    try {
+      const apiBase = getApiBaseUrl();
+      
+      // 加载处理步骤
+      const stepsResponse = await fetch(
+        `${apiBase}/api/trpc/realInsar.getProjectSteps?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`
+      );
+      const stepsData = await stepsResponse.json();
+      
+      if (stepsData?.result?.data?.json?.success && stepsData.result.data.json.steps.length > 0) {
+        const dbSteps = stepsData.result.data.json.steps;
+        setSteps(dbSteps.map((s: any, idx: number) => ({
+          id: s.id,
+          name: s.stepName,
+          status: s.status,
+          progress: s.progress,
+          duration: s.duration ? `${s.duration}秒` : undefined,
+          error: s.errorMessage,
+          startedAt: s.startTime,
+          completedAt: s.endTime,
+        })));
+      }
+      
+      // 加载处理日志
+      const logsResponse = await fetch(
+        `${apiBase}/api/trpc/realInsar.getProjectLogs?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId, limit: 50 } }))}`
+      );
+      const logsData = await logsResponse.json();
+      
+      if (logsData?.result?.data?.json?.success && logsData.result.data.json.logs.length > 0) {
+        const dbLogs = logsData.result.data.json.logs;
+        // 日志按时间倒序排列，取最新的
+        const formattedLogs = dbLogs
+          .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          .slice(0, 20)
+          .reverse()
+          .map((log: any) => `[${log.logLevel.toUpperCase()}] ${log.message}`);
+        setProcessingLogs(formattedLogs);
+      }
+    } catch (error) {
+      console.error("Failed to load database data:", error);
+    }
+  }, [projectId]);
+
   // 从本地存储加载项目
   const loadProject = useCallback(async () => {
     try {
@@ -121,6 +170,7 @@ export default function ProjectDetailScreen() {
 
   useEffect(() => {
     loadProject();
+    loadDatabaseData(); // 加载数据库中的处理步骤和日志
     
     return () => {
       // 清理轮询
@@ -128,7 +178,7 @@ export default function ProjectDetailScreen() {
         clearInterval(pollingRef.current);
       }
     };
-  }, [loadProject]);
+  }, [loadProject, loadDatabaseData]);
 
   // 更新本地存储中的项目状态
   const updateProjectInStorage = async (updates: Partial<Project>) => {
@@ -224,8 +274,9 @@ export default function ProjectDetailScreen() {
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await loadProject();
+    await loadDatabaseData(); // 也刷新数据库数据
     setIsRefreshing(false);
-  }, [loadProject]);
+  }, [loadProject, loadDatabaseData]);
 
   const handleStartProcessing = async () => {
     if (!project) return;

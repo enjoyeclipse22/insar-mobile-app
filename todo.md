@@ -816,3 +816,21 @@
 - [x] 数据可用性检查失败（Failed to fetch）- 需要配置 ASF_API_TOKEN
 - [x] 项目编辑功能测试 - 已实现
 - [x] 项目删除功能测试 - 已实现
+
+
+## 第 23 阶段：处理日志和结果保存到数据库
+
+### 后端处理流程
+- [x] 处理过程中将日志实时写入 processing_logs 表
+- [x] 更新 processing_steps 表记录每个处理步骤的状态
+- [x] 处理完成后将结果保存到 processing_results 表
+- [x] 添加 getProjectSteps, getProjectLogs, getProjectResults API
+- [x] 添加 clearProjectProcessingData API
+
+### 前端显示
+- [x] 从数据库获取并显示处理日志
+- [x] 从数据库获取并显示处理结果
+- [x] 显示处理步骤的详细状态
+- [x] 创建处理监控页面 (processing-monitor.tsx)
+- [x] 创建结果查看页面 (results-viewer.tsx)
+- [x] 项目详情页面加载数据库中的步骤和日志

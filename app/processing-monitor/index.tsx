@@ -157,8 +157,61 @@ export default function ProcessingMonitorScreen() {
     };
   }, [projectId]);
 
+  // 从数据库加载历史日志和步骤
+  const loadDatabaseData = useCallback(async () => {
+    const numericId = parseInt(projectId as string, 10);
+    if (isNaN(numericId)) return;
+
+    try {
+      const apiBase = getApiBaseUrl();
+      
+      // 加载处理步骤
+      const stepsResponse = await fetch(
+        `${apiBase}/api/trpc/realInsar.getProjectSteps?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`
+      );
+      const stepsData = await stepsResponse.json();
+      
+      if (stepsData?.result?.data?.json?.success && stepsData.result.data.json.steps.length > 0) {
+        const dbSteps = stepsData.result.data.json.steps;
+        setSteps(dbSteps.map((s: any) => ({
+          id: s.id,
+          name: s.stepName,
+          status: s.status,
+          progress: s.progress,
+          duration: s.duration,
+        })));
+      }
+      
+      // 加载处理日志
+      const logsResponse = await fetch(
+        `${apiBase}/api/trpc/realInsar.getProjectLogs?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId, limit: 500 } }))}`
+      );
+      const logsData = await logsResponse.json();
+      
+      if (logsData?.result?.data?.json?.success && logsData.result.data.json.logs.length > 0) {
+        const dbLogs = logsData.result.data.json.logs;
+        const formattedLogs: LogEntry[] = dbLogs
+          .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+          .map((log: any, index: number) => ({
+            id: log.id || index,
+            timestamp: new Date(log.timestamp).toLocaleTimeString(),
+            level: log.logLevel?.toUpperCase() || "INFO",
+            message: log.message,
+            step: "",
+          }));
+        setLogs(formattedLogs);
+        lastLogCountRef.current = formattedLogs.length;
+      }
+    } catch (error) {
+      console.error("Failed to load database data:", error);
+    }
+  }, [projectId]);
+
   // 当有 taskId 时开始轮询
   useEffect(() => {
+    // 先加载数据库中的历史数据
+    loadDatabaseData();
+    
     if (taskId) {
       startPolling();
     }
@@ -168,7 +221,7 @@ export default function ProcessingMonitorScreen() {
         clearInterval(pollingRef.current);
       }
     };
-  }, [taskId]);
+  }, [taskId, loadDatabaseData]);
 
   // 轮询后端获取状态和日志
   const startPolling = () => {

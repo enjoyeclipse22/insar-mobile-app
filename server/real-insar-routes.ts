@@ -7,6 +7,19 @@
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { RealInSARProcessor, ProcessingConfig, ProcessingLog, ProcessingResult } from "./real-insar-processor";
+import {
+  getDb,
+  addProcessingLog,
+  createProcessingStep,
+  updateProcessingStep,
+  createProcessingResult,
+  updateProject,
+  getProjectSteps,
+  getProjectLogs,
+  getProjectResults,
+} from "./db";
+import { processingSteps, processingLogs, processingResults } from "../drizzle/schema";
+import { eq } from "drizzle-orm";
 
 // 处理任务存储
 interface ProcessingTask {
@@ -25,6 +38,133 @@ interface ProcessingTask {
 }
 
 const processingTasks = new Map<string, ProcessingTask>();
+
+// 处理步骤名称映射
+const STEP_NAMES = [
+  "data_search",
+  "data_download",
+  "orbit_download",
+  "dem_download",
+  "coregistration",
+  "interferogram",
+  "phase_unwrapping",
+  "deformation",
+] as const;
+
+const STEP_DISPLAY_NAMES: Record<string, string> = {
+  data_search: "数据搜索",
+  data_download: "数据下载",
+  orbit_download: "轨道下载",
+  dem_download: "DEM下载",
+  coregistration: "配准",
+  interferogram: "干涉图生成",
+  phase_unwrapping: "相位解缠",
+  deformation: "形变反演",
+};
+
+/**
+ * 初始化项目的处理步骤到数据库
+ */
+async function initializeProcessingSteps(projectId: number): Promise<Map<string, number>> {
+  const stepIdMap = new Map<string, number>();
+  const db = await getDb();
+  if (!db) return stepIdMap;
+
+  try {
+    // 先删除旧的处理步骤
+    await db.delete(processingSteps).where(eq(processingSteps.projectId, projectId));
+
+    // 创建新的处理步骤
+    for (const stepName of STEP_NAMES) {
+      const result = await db.insert(processingSteps).values({
+        projectId,
+        stepName: STEP_DISPLAY_NAMES[stepName] || stepName,
+        status: "pending",
+        progress: 0,
+      });
+      stepIdMap.set(stepName, result[0].insertId);
+    }
+  } catch (error) {
+    console.error("[初始化处理步骤失败]", error);
+  }
+
+  return stepIdMap;
+}
+
+/**
+ * 保存处理日志到数据库
+ */
+async function saveLogToDatabase(
+  projectId: number,
+  stepId: number | null,
+  level: "debug" | "info" | "warning" | "error",
+  message: string
+): Promise<void> {
+  try {
+    await addProcessingLog({
+      projectId,
+      stepId,
+      logLevel: level,
+      message,
+    });
+  } catch (error) {
+    console.error("[保存日志失败]", error);
+  }
+}
+
+/**
+ * 更新处理步骤状态
+ */
+async function updateStepStatus(
+  stepId: number,
+  status: "pending" | "processing" | "completed" | "failed",
+  progress: number,
+  startTime?: Date,
+  endTime?: Date,
+  errorMessage?: string
+): Promise<void> {
+  try {
+    const updateData: any = { status, progress };
+    if (startTime) updateData.startTime = startTime;
+    if (endTime) {
+      updateData.endTime = endTime;
+      if (startTime) {
+        updateData.duration = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+      }
+    }
+    if (errorMessage) updateData.errorMessage = errorMessage;
+
+    await updateProcessingStep(stepId, updateData);
+  } catch (error) {
+    console.error("[更新步骤状态失败]", error);
+  }
+}
+
+/**
+ * 保存处理结果到数据库
+ */
+async function saveResultToDatabase(
+  projectId: number,
+  resultType: "interferogram" | "coherence" | "deformation" | "dem" | "unwrapped_phase" | "los_displacement",
+  fileUrl: string,
+  fileName: string,
+  stats?: { min: number; max: number; mean: number }
+): Promise<void> {
+  try {
+    await createProcessingResult({
+      projectId,
+      resultType,
+      fileUrl,
+      fileName,
+      format: "GeoTIFF",
+      minValue: stats?.min?.toFixed(4),
+      maxValue: stats?.max?.toFixed(4),
+      meanValue: stats?.mean?.toFixed(4),
+    });
+  } catch (error) {
+    console.error("[保存结果失败]", error);
+  }
+}
 
 /**
  * 启动真实 InSAR 处理
@@ -77,12 +217,75 @@ async function startRealProcessing(
 
   processingTasks.set(taskId, task);
 
+  // 初始化数据库中的处理步骤
+  const stepIdMap = await initializeProcessingSteps(projectId);
+
+  // 更新项目状态为处理中
+  try {
+    await updateProject(projectId, { status: "processing", progress: 0 });
+  } catch (error) {
+    console.error("[更新项目状态失败]", error);
+  }
+
+  // 记录当前步骤的开始时间
+  const stepStartTimes = new Map<string, Date>();
+  let currentStepName = "";
+
   // 监听日志事件
-  processor.on("log", (log: ProcessingLog) => {
+  processor.on("log", async (log: ProcessingLog) => {
     task.logs.push(log);
     task.currentStep = log.step;
     if (log.progress !== undefined) {
       task.progress = log.progress;
+    }
+
+    // 确定日志级别
+    let logLevel: "debug" | "info" | "warning" | "error" = "info";
+    if (log.level === "ERROR") logLevel = "error";
+    else if (log.level === "WARNING") logLevel = "warning";
+    else if (log.level === "DEBUG") logLevel = "debug";
+
+    // 确定当前步骤
+    let stepKey = "";
+    const stepLower = log.step.toLowerCase();
+    if (stepLower.includes("数据搜索") || stepLower.includes("search")) stepKey = "data_search";
+    else if (stepLower.includes("数据下载") || stepLower.includes("data download") || stepLower.includes("slc")) stepKey = "data_download";
+    else if (stepLower.includes("轨道") || stepLower.includes("orbit")) stepKey = "orbit_download";
+    else if (stepLower.includes("dem")) stepKey = "dem_download";
+    else if (stepLower.includes("配准") || stepLower.includes("coregistration") || stepLower.includes("registration")) stepKey = "coregistration";
+    else if (stepLower.includes("干涉") || stepLower.includes("interferogram")) stepKey = "interferogram";
+    else if (stepLower.includes("解缠") || stepLower.includes("unwrap")) stepKey = "phase_unwrapping";
+    else if (stepLower.includes("形变") || stepLower.includes("deformation") || stepLower.includes("inversion")) stepKey = "deformation";
+
+    // 如果步骤变化，更新上一个步骤为完成，当前步骤为处理中
+    if (stepKey && stepKey !== currentStepName) {
+      // 完成上一个步骤
+      if (currentStepName && stepIdMap.has(currentStepName)) {
+        const prevStepId = stepIdMap.get(currentStepName)!;
+        const prevStartTime = stepStartTimes.get(currentStepName);
+        await updateStepStatus(prevStepId, "completed", 100, prevStartTime, new Date());
+      }
+
+      // 开始新步骤
+      currentStepName = stepKey;
+      stepStartTimes.set(stepKey, new Date());
+      if (stepIdMap.has(stepKey)) {
+        const stepId = stepIdMap.get(stepKey)!;
+        await updateStepStatus(stepId, "processing", 0, new Date());
+      }
+    }
+
+    // 保存日志到数据库
+    const stepId = stepKey ? stepIdMap.get(stepKey) || null : null;
+    await saveLogToDatabase(projectId, stepId, logLevel, `[${log.step}] ${log.message}`);
+
+    // 更新项目进度
+    if (log.progress !== undefined) {
+      try {
+        await updateProject(projectId, { progress: log.progress });
+      } catch (error) {
+        // 忽略进度更新错误
+      }
     }
   });
 
@@ -100,10 +303,103 @@ async function startRealProcessing(
       task.endTime = result.endTime;
       task.error = result.error;
       task.result = result;
+
+      // 完成最后一个步骤
+      if (currentStepName && stepIdMap.has(currentStepName)) {
+        const lastStepId = stepIdMap.get(currentStepName)!;
+        const lastStartTime = stepStartTimes.get(currentStepName);
+        await updateStepStatus(
+          lastStepId,
+          result.success ? "completed" : "failed",
+          result.success ? 100 : task.progress,
+          lastStartTime,
+          new Date(),
+          result.error
+        );
+      }
+
+      // 更新项目状态
+      try {
+        await updateProject(projectId, {
+          status: result.success ? "completed" : "failed",
+          progress: result.success ? 100 : task.progress,
+          completedAt: result.success ? new Date() : null,
+        });
+      } catch (error) {
+        console.error("[更新项目状态失败]", error);
+      }
+
+      // 保存处理结果到数据库
+      if (result.success && result.outputs) {
+        // 保存干涉图
+        if (result.outputs.interferogramFile) {
+          await saveResultToDatabase(
+            projectId,
+            "interferogram",
+            result.outputs.interferogramFile,
+            "interferogram.tif"
+          );
+        }
+
+        // 保存相干图
+        if (result.outputs.coherenceFile) {
+          await saveResultToDatabase(
+            projectId,
+            "coherence",
+            result.outputs.coherenceFile,
+            "coherence.tif",
+            result.statistics?.meanCoherence ? { min: 0, max: 1, mean: result.statistics.meanCoherence } : undefined
+          );
+        }
+
+        // 保存解缠相位
+        if (result.outputs.unwrappedPhaseFile) {
+          await saveResultToDatabase(
+            projectId,
+            "unwrapped_phase",
+            result.outputs.unwrappedPhaseFile,
+            "unwrapped_phase.tif"
+          );
+        }
+
+        // 保存形变图
+        if (result.outputs.deformationFile) {
+          await saveResultToDatabase(
+            projectId,
+            "deformation",
+            result.outputs.deformationFile,
+            "deformation.tif",
+            result.statistics ? {
+              min: result.statistics.minDeformation || 0,
+              max: result.statistics.maxDeformation || 0,
+              mean: result.statistics.meanDeformation || 0,
+            } : undefined
+          );
+        }
+      }
+
+      // 保存最终日志
+      await saveLogToDatabase(
+        projectId,
+        null,
+        result.success ? "info" : "error",
+        result.success ? "处理完成" : `处理失败: ${result.error}`
+      );
+
     } catch (error) {
       task.status = "failed";
       task.error = error instanceof Error ? error.message : String(error);
       task.endTime = new Date();
+
+      // 更新项目状态为失败
+      try {
+        await updateProject(projectId, { status: "failed" });
+      } catch (e) {
+        console.error("[更新项目状态失败]", e);
+      }
+
+      // 保存错误日志
+      await saveLogToDatabase(projectId, null, "error", `处理异常: ${task.error}`);
     }
   })();
 
@@ -614,4 +910,121 @@ export const realInsarRouter = router({
     const result = await runChongqingTest();
     return result;
   }),
+
+  // 从数据库获取项目的处理步骤
+  getProjectSteps: publicProcedure
+    .input(z.object({ projectId: z.number() }))
+    .query(async ({ input }) => {
+      try {
+        const steps = await getProjectSteps(input.projectId);
+        return {
+          success: true,
+          steps: steps.map((step) => ({
+            id: step.id,
+            stepName: step.stepName,
+            status: step.status,
+            progress: step.progress,
+            startTime: step.startTime,
+            endTime: step.endTime,
+            duration: step.duration,
+            errorMessage: step.errorMessage,
+          })),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          steps: [],
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+
+  // 从数据库获取项目的处理日志
+  getProjectLogs: publicProcedure
+    .input(
+      z.object({
+        projectId: z.number(),
+        limit: z.number().optional().default(100),
+      })
+    )
+    .query(async ({ input }) => {
+      try {
+        const logs = await getProjectLogs(input.projectId, input.limit);
+        return {
+          success: true,
+          logs: logs.map((log) => ({
+            id: log.id,
+            stepId: log.stepId,
+            logLevel: log.logLevel,
+            message: log.message,
+            timestamp: log.timestamp,
+          })),
+          total: logs.length,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          logs: [],
+          total: 0,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+
+  // 从数据库获取项目的处理结果
+  getProjectResults: publicProcedure
+    .input(z.object({ projectId: z.number() }))
+    .query(async ({ input }) => {
+      try {
+        const results = await getProjectResults(input.projectId);
+        return {
+          success: true,
+          results: results.map((result) => ({
+            id: result.id,
+            resultType: result.resultType,
+            fileUrl: result.fileUrl,
+            fileName: result.fileName,
+            fileSize: result.fileSize,
+            format: result.format,
+            minValue: result.minValue,
+            maxValue: result.maxValue,
+            meanValue: result.meanValue,
+            metadata: result.metadata,
+            createdAt: result.createdAt,
+          })),
+        };
+      } catch (error) {
+        return {
+          success: false,
+          results: [],
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
+
+  // 清除项目的处理数据（日志、步骤、结果）
+  clearProjectProcessingData: publicProcedure
+    .input(z.object({ projectId: z.number() }))
+    .mutation(async ({ input }) => {
+      try {
+        const db = await getDb();
+        if (!db) {
+          return { success: false, error: "数据库不可用" };
+        }
+
+        // 删除日志
+        await db.delete(processingLogs).where(eq(processingLogs.projectId, input.projectId));
+        // 删除步骤
+        await db.delete(processingSteps).where(eq(processingSteps.projectId, input.projectId));
+        // 删除结果
+        await db.delete(processingResults).where(eq(processingResults.projectId, input.projectId));
+
+        return { success: true, message: "处理数据已清除" };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }),
 });
