@@ -34,6 +34,14 @@ import {
   savePhaseForSnaphu,
   readUnwrappedPhase,
 } from "./insar-tools";
+import {
+  checkCache,
+  getCachePath,
+  addToCache,
+  copyCacheFile,
+  formatFileSize,
+  initCacheDirectories,
+} from "./download-cache";
 
 const execAsync = promisify(exec);
 
@@ -496,6 +504,9 @@ export class RealInSARProcessor extends EventEmitter {
       );
     }
 
+    // 初始化缓存目录
+    initCacheDirectories();
+
     this.log("INFO", "数据下载", `准备下载 ${Math.min(searchResults.length, 2)} 个 SLC 产品`);
 
     const downloadedFiles: string[] = [];
@@ -510,16 +521,51 @@ export class RealInSARProcessor extends EventEmitter {
     for (let i = 0; i < selectedProducts.length; i++) {
       const product = selectedProducts[i];
       const progress = Math.floor(((i + 1) / selectedProducts.length) * 100);
+      const filename = `${product.granuleName}.zip`;
+      const destPath = path.join(slcDir, filename);
 
-      this.log("INFO", "数据下载", `下载产品 ${i + 1}/${selectedProducts.length}: ${product.granuleName}`, progress);
+      // 检查缓存
+      const cachedPath = checkCache(filename, product.downloadUrl, "slc");
+      if (cachedPath) {
+        this.log("INFO", "数据下载", `[缓存命中] 产品 ${i + 1}/${selectedProducts.length}: ${product.granuleName}`, progress);
+        
+        // 从缓存复制到工作目录
+        if (cachedPath !== destPath) {
+          if (copyCacheFile(filename, destPath, "slc")) {
+            this.log("INFO", "数据下载", `从缓存复制文件: ${formatFileSize(fs.statSync(destPath).size)}`);
+          } else {
+            // 复制失败，使用缓存路径
+            downloadedFiles.push(cachedPath);
+            continue;
+          }
+        }
+        downloadedFiles.push(destPath);
+        continue;
+      }
 
-      const destPath = path.join(slcDir, `${product.granuleName}.zip`);
+      this.log("INFO", "数据下载", `[新下载] 产品 ${i + 1}/${selectedProducts.length}: ${product.granuleName}`, progress);
 
       if (product.downloadUrl) {
         try {
-          // 真实下载（需要 ASF 认证）
-          await this.downloadFile(product.downloadUrl, destPath, "数据下载");
+          // 下载到缓存目录
+          const cachePath = getCachePath(filename, "slc");
+          await this.downloadFile(product.downloadUrl, cachePath, "数据下载");
+          
+          // 添加到缓存索引
+          addToCache(filename, cachePath, "slc", product.downloadUrl, {
+            granuleName: product.granuleName,
+            startTime: product.startTime,
+            stopTime: product.stopTime,
+            flightDirection: product.flightDirection,
+          });
+          
+          // 复制到工作目录
+          if (cachePath !== destPath) {
+            copyCacheFile(filename, destPath, "slc");
+          }
+          
           downloadedFiles.push(destPath);
+          this.log("INFO", "数据下载", `文件已缓存: ${formatFileSize(fs.statSync(cachePath).size)}`);
         } catch (error) {
           // 如果下载失败，记录错误但继续
           this.log("WARNING", "数据下载", `下载失败: ${error}，创建占位文件`);
@@ -545,7 +591,7 @@ export class RealInSARProcessor extends EventEmitter {
       throw new Error("下载的 SLC 文件不足，无法进行干涉处理");
     }
 
-    this.log("INFO", "数据下载", `成功下载 ${downloadedFiles.length} 个 SLC 产品`, 100);
+    this.log("INFO", "数据下载", `成功获取 ${downloadedFiles.length} 个 SLC 产品（含缓存）`, 100);
 
     return downloadedFiles;
   }
@@ -628,6 +674,9 @@ export class RealInSARProcessor extends EventEmitter {
   private async downloadDEM(): Promise<string> {
     this.log("INFO", "DEM下载", "正在下载 SRTM DEM 数据...");
 
+    // 初始化缓存目录
+    initCacheDirectories();
+
     const demDir = path.join(this.workDir, "dem");
     if (!fs.existsSync(demDir)) {
       fs.mkdirSync(demDir, { recursive: true });
@@ -643,6 +692,7 @@ export class RealInSARProcessor extends EventEmitter {
 
     const demTiles: string[] = [];
     let tileCount = 0;
+    let cachedCount = 0;
     const totalTiles = (latMax - latMin + 1) * (lonMax - lonMin + 1);
 
     for (let lat = latMin; lat <= latMax; lat++) {
@@ -653,13 +703,35 @@ export class RealInSARProcessor extends EventEmitter {
         const latStr = lat >= 0 ? `N${lat.toString().padStart(2, "0")}` : `S${Math.abs(lat).toString().padStart(2, "0")}`;
         const lonStr = lon >= 0 ? `E${lon.toString().padStart(3, "0")}` : `W${Math.abs(lon).toString().padStart(3, "0")}`;
         const tileName = `${latStr}${lonStr}`;
-
-        this.log("DEBUG", "DEM下载", `处理 SRTM 瓦片: ${tileName}`, progress);
+        const filename = `${tileName}.SRTMGL1.hgt.zip`;
 
         // SRTM 瓦片 URL (使用 OpenTopography 或 USGS)
-        const srtmUrl = `https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/${tileName}.SRTMGL1.hgt.zip`;
-
+        const srtmUrl = `https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/${filename}`;
         const tilePath = path.join(demDir, `${tileName}.hgt`);
+
+        // 检查缓存
+        const cachedPath = checkCache(filename, srtmUrl, "dem");
+        if (cachedPath) {
+          this.log("DEBUG", "DEM下载", `[缓存命中] SRTM 瓦片: ${tileName}`, progress);
+          cachedCount++;
+          
+          // 创建 DEM 瓦片元信息
+          const tileMetadata = {
+            tileName,
+            lat,
+            lon,
+            resolution: 30,
+            source: "SRTM GL1",
+            url: srtmUrl,
+            cached: true,
+            cachePath: cachedPath,
+          };
+          fs.writeFileSync(tilePath + ".json", JSON.stringify(tileMetadata, null, 2));
+          demTiles.push(tilePath + ".json");
+          continue;
+        }
+
+        this.log("DEBUG", "DEM下载", `处理 SRTM 瓦片: ${tileName}`, progress);
 
         // 创建 DEM 瓦片元信息
         const tileMetadata = {
@@ -688,7 +760,7 @@ export class RealInSARProcessor extends EventEmitter {
 
     fs.writeFileSync(mergedDemPath + ".json", JSON.stringify(mergedMetadata, null, 2));
 
-    this.log("INFO", "DEM下载", `DEM 下载完成，共 ${demTiles.length} 个瓦片，分辨率: 30m`, 100);
+    this.log("INFO", "DEM下载", `DEM 下载完成，共 ${demTiles.length} 个瓦片（${cachedCount} 个从缓存），分辨率: 30m`, 100);
 
     return mergedDemPath + ".json";
   }

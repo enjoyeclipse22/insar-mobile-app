@@ -6,6 +6,7 @@ import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { useState, useEffect, useCallback } from "react";
 import { Image as ExpoImage } from "expo-image";
 import { getApiBaseUrl } from "@/constants/oauth";
+import { InSAR3DHeatmap, generateSampleHeatmapData, type HeatmapData } from "@/components/insar-3d-heatmap";
 
 interface ProcessingResult {
   id: number;
@@ -31,6 +32,8 @@ export default function ResultsViewerScreen() {
   const [selectedResult, setSelectedResult] = useState<ProcessingResult | null>(null);
   const [colorScale, setColorScale] = useState<"viridis" | "jet" | "gray">("viridis");
   const [imageLoading, setImageLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
+  const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null);
 
   // 真实的处理结果，使用生成的图像
   const results: ProcessingResult[] = [
@@ -125,6 +128,32 @@ export default function ResultsViewerScreen() {
   useEffect(() => {
     loadDatabaseResults();
   }, [loadDatabaseResults]);
+
+  // 生成 3D 热力图数据
+  useEffect(() => {
+    if (selectedResult) {
+      // 根据选中的结果类型生成对应的热力图数据
+      const bounds = {
+        north: 37.5,
+        south: 36.5,
+        east: 37.5,
+        west: 36.5,
+      };
+      
+      let dataType: HeatmapData["type"] = "interferogram";
+      if (selectedResult.resultType === "deformation") {
+        dataType = "deformation";
+      } else if (selectedResult.resultType === "coherence") {
+        dataType = "coherence";
+      } else if (selectedResult.resultType === "dem") {
+        dataType = "dem";
+      }
+      
+      const data = generateSampleHeatmapData(bounds, dataType, 60);
+      data.projectName = "土耳其地震区域";
+      setHeatmapData(data);
+    }
+  }, [selectedResult]);
 
   // 合并默认结果和数据库结果
   const allResults = dbResults.length > 0 ? dbResults : results;
@@ -287,62 +316,160 @@ export default function ResultsViewerScreen() {
           {/* Visualization Area */}
           {selectedResult ? (
             <View style={{ paddingHorizontal: 16, paddingVertical: 16 }}>
-              {/* 图像显示区域 */}
+              {/* 2D/3D 切换按钮 */}
               <View
                 style={{
+                  flexDirection: "row",
                   backgroundColor: colors.surface,
                   borderRadius: 12,
-                  overflow: "hidden",
+                  padding: 4,
                   marginBottom: 16,
                 }}
               >
-                {selectedResult.imagePath ? (
-                  <ExpoImage
-                    source={{ uri: selectedResult.imagePath }}
-                    style={{
-                      width: screenWidth - 32,
-                      height: (screenWidth - 32) * 0.8,
-                    }}
-                    contentFit="contain"
-                    onLoadStart={() => setImageLoading(true)}
-                    onLoadEnd={() => setImageLoading(false)}
-                    transition={200}
+                <TouchableOpacity
+                  onPress={() => setViewMode("2d")}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: viewMode === "2d" ? colors.primary : "transparent",
+                    alignItems: "center",
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <MaterialIcons
+                    name="image"
+                    size={18}
+                    color={viewMode === "2d" ? "#FFFFFF" : colors.muted}
                   />
-                ) : (
-                  <View
+                  <Text
                     style={{
-                      width: screenWidth - 32,
-                      height: (screenWidth - 32) * 0.8,
-                      backgroundColor: colors.border,
-                      justifyContent: "center",
-                      alignItems: "center",
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: viewMode === "2d" ? "#FFFFFF" : colors.muted,
                     }}
                   >
-                    <MaterialIcons name={getResultIcon(selectedResult.resultType)} size={64} color={colors.muted} />
-                    <Text style={{ fontSize: 14, color: colors.muted, marginTop: 12 }}>
-                      {getResultLabel(selectedResult.resultType)} 预览
-                    </Text>
-                  </View>
-                )}
-                
-                {/* 图像加载指示器 */}
-                {imageLoading && (
-                  <View
+                    2D 图像
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setViewMode("3d")}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 10,
+                    borderRadius: 8,
+                    backgroundColor: viewMode === "3d" ? colors.primary : "transparent",
+                    alignItems: "center",
+                    flexDirection: "row",
+                    justifyContent: "center",
+                    gap: 6,
+                  }}
+                >
+                  <MaterialIcons
+                    name="3d-rotation"
+                    size={18}
+                    color={viewMode === "3d" ? "#FFFFFF" : colors.muted}
+                  />
+                  <Text
                     style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      backgroundColor: "rgba(0,0,0,0.3)",
-                      justifyContent: "center",
-                      alignItems: "center",
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: viewMode === "3d" ? "#FFFFFF" : colors.muted,
                     }}
                   >
-                    <Text style={{ color: "#FFFFFF", fontSize: 14 }}>加载中...</Text>
-                  </View>
-                )}
+                    3D 热力图
+                  </Text>
+                </TouchableOpacity>
               </View>
+
+              {/* 图像显示区域 */}
+              {viewMode === "2d" ? (
+                <View
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    marginBottom: 16,
+                  }}
+                >
+                  {selectedResult.imagePath ? (
+                    <ExpoImage
+                      source={{ uri: selectedResult.imagePath }}
+                      style={{
+                        width: screenWidth - 32,
+                        height: (screenWidth - 32) * 0.8,
+                      }}
+                      contentFit="contain"
+                      onLoadStart={() => setImageLoading(true)}
+                      onLoadEnd={() => setImageLoading(false)}
+                      transition={200}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: screenWidth - 32,
+                        height: (screenWidth - 32) * 0.8,
+                        backgroundColor: colors.border,
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                    >
+                      <MaterialIcons name={getResultIcon(selectedResult.resultType)} size={64} color={colors.muted} />
+                      <Text style={{ fontSize: 14, color: colors.muted, marginTop: 12 }}>
+                        {getResultLabel(selectedResult.resultType)} 预览
+                      </Text>
+                    </View>
+                  )}
+                  
+                  {/* 图像加载指示器 */}
+                  {imageLoading && (
+                    <View
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: "rgba(0,0,0,0.3)",
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Text style={{ color: "#FFFFFF", fontSize: 14 }}>加载中...</Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                /* 3D 热力图显示 */
+                <View style={{ marginBottom: 16 }}>
+                  {heatmapData ? (
+                    <InSAR3DHeatmap
+                      data={heatmapData}
+                      height={(screenWidth - 32) * 0.9}
+                      colorScale={colorScale === "viridis" ? "viridis" : colorScale === "jet" ? "jet" : "coolwarm"}
+                      showColorbar={true}
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: screenWidth - 32,
+                        height: (screenWidth - 32) * 0.9,
+                        backgroundColor: colors.surface,
+                        borderRadius: 12,
+                        justifyContent: "center",
+                        alignItems: "center",
+                      }}
+                    >
+                      <MaterialIcons name="3d-rotation" size={64} color={colors.muted} />
+                      <Text style={{ fontSize: 14, color: colors.muted, marginTop: 12 }}>
+                        正在生成 3D 热力图...
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
 
               {/* 结果描述 */}
               <View
