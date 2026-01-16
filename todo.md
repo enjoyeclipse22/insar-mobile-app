@@ -7,23 +7,23 @@
 - [x] 项目列表（Projects）- 项目卡片列表
 - [x] 项目详情（Project Detail）- 处理流程展示
 - [x] 新建项目向导（Create Project Wizard）- 4 步向导流程
-- [ ] 处理监控（Processing Monitor）- 实时进度显示
-- [ ] 结果展示（Results Viewer）- 干涉图查看
+- [x] 处理监控（Processing Monitor）- 实时进度显示
+- [x] 结果展示（Results Viewer）- 干涉图查看
 
 ### 核心功能
 - [x] 项目元数据管理（创建、删除、重命名）
-- [ ] 基础 InSAR 处理流程集成（数据下载 → 干涉图生成）
+- [x] 基础 InSAR 处理流程集成（数据下载 → 干涉图生成）
 - [x] 处理状态跟踪和日志记录
 - [ ] 结果图像缓存和预加载
 - [ ] 导出功能（PNG、GeoTIFF）
 
 ### 后端服务
 - [x] 设置 tRPC 后端框架
-- [ ] 集成 PyGMTSAR 或 MintPy 库
-- [ ] 实现数据下载模块（Sentinel-1、轨道、DEM）
-- [ ] 实现配准模块
-- [ ] 实现干涉图生成模块
-- [ ] 实现 WebSocket 日志流
+- [x] 集成 PyGMTSAR 和 asf_search 库
+- [x] 实现数据下载模块（Sentinel-1、轨道、DEM）
+- [x] 实现配准模块
+- [x] 实现干涉图生成模块
+- [x] 实现 WebSocket 日志流
 
 ### 数据存储
 - [x] 设置 MySQL 数据库（项目元数据、处理步骤、结果、日志）
@@ -148,7 +148,7 @@
 - [x] 显示处理步骤和实时进度条
 - [x] 实现实时日志窗口
 - [x] 添加暂停和取消按钮
-- [ ] 实现 WebSocket 日志流连接
+- [x] 实现 WebSocket 日志流连接
 - [ ] 处理错误和重试机制
 
 ### 结果可视化
