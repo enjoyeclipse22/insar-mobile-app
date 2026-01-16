@@ -1028,3 +1028,21 @@
   - 覆盖初始化、日志记录、取消处理、API 解析、配置验证等
 - [x] 运行测试并验证
 
+
+## 全面代码清理 - 删除未使用的文件夹和脚本
+- [x] 审查项目目录结构
+- [x] 分析 App 调用情况
+- [x] 识别并删除未使用的文件
+  - 删除 python_service/ 目录（早期 Python 服务实现）
+  - 删除 docs/ 目录（开发文档）
+  - 删除 insar-results/ 目录（临时结果文件）
+  - 删除 assets/sample_results/ 目录（未使用的示例图片）
+  - 删除 server/scripts/real_insar_processor.py
+  - 删除 server/scripts/integrate_real_processing.ts
+  - 删除 server/real-insar-test.ts
+  - 删除 scripts/reset-project.js
+- [x] 验证删除后功能正常
+  - TypeScript 编译通过
+  - 116 个测试用例通过
+  - API 服务正常运行
+
