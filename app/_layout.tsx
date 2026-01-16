@@ -86,6 +86,11 @@ export default function RootLayout() {
           {/* If a screen needs the native header, explicitly enable it and set a human title via Stack.Screen options. */}
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="project/[id]" />
+            <Stack.Screen name="projects" />
+            <Stack.Screen name="create-project" />
+            <Stack.Screen name="processing-monitor" />
+            <Stack.Screen name="results-viewer" />
             <Stack.Screen name="oauth/callback" />
           </Stack>
           <StatusBar style="auto" />

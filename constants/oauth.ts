@@ -36,12 +36,20 @@ export function getApiBaseUrl(): string {
   }
 
   // On web, derive from current hostname by replacing port 8081 with 3000
-  if (ReactNative.Platform.OS === "web" && typeof window !== "undefined" && window.location) {
-    const { protocol, hostname } = window.location;
-    // Pattern: 8081-sandboxid.region.domain -> 3000-sandboxid.region.domain
-    const apiHostname = hostname.replace(/^8081-/, "3000-");
-    if (apiHostname !== hostname) {
-      return `${protocol}//${apiHostname}`;
+  if (ReactNative.Platform.OS === "web") {
+    // Check if window is available (not during SSR)
+    if (typeof window !== "undefined" && window.location && window.location.hostname) {
+      const { protocol, hostname } = window.location;
+      console.log("[getApiBaseUrl] Web platform, hostname:", hostname);
+      // Pattern: 8081-sandboxid.region.domain -> 3000-sandboxid.region.domain
+      const apiHostname = hostname.replace(/^8081-/, "3000-");
+      if (apiHostname !== hostname) {
+        const result = `${protocol}//${apiHostname}`;
+        console.log("[getApiBaseUrl] Returning:", result);
+        return result;
+      }
+    } else {
+      console.log("[getApiBaseUrl] Window not available (SSR)");
     }
   }
 

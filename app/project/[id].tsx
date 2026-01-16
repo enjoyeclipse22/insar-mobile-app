@@ -72,8 +72,13 @@ const STEP_NAME_MAP: Record<string, number> = {
 export default function ProjectDetailScreen() {
   const router = useRouter();
   const colors = useColors();
-  const { id } = useLocalSearchParams();
-  const projectId = id as string;
+  const params = useLocalSearchParams();
+  const projectId = params.id as string;
+  
+  // 调试信息
+  console.log("[ProjectDetailScreen] ====== COMPONENT MOUNT ======");
+  console.log("[ProjectDetailScreen] Params:", JSON.stringify(params));
+  console.log("[ProjectDetailScreen] projectId:", projectId, "type:", typeof projectId);
   
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -94,8 +99,12 @@ export default function ProjectDetailScreen() {
 
   // 从数据库加载处理步骤和日志
   const loadDatabaseData = useCallback(async () => {
+    console.log("[loadDatabaseData] Starting, projectId:", projectId);
     const numericId = parseInt(projectId, 10);
-    if (isNaN(numericId)) return;
+    if (isNaN(numericId)) {
+      console.log("[loadDatabaseData] Invalid projectId, returning");
+      return;
+    }
 
     try {
       const apiBase = getApiBaseUrl();
@@ -141,82 +150,6 @@ export default function ProjectDetailScreen() {
     }
   }, [projectId]);
 
-  // 从本地存储和数据库加载项目
-  const loadProject = useCallback(async () => {
-    try {
-      let foundProject: Project | null = null;
-      
-      // 1. 先从本地存储加载
-      const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
-      if (stored) {
-        const projects: Project[] = JSON.parse(stored);
-        const found = projects.find(p => p.id.toString() === projectId);
-        if (found) {
-          foundProject = found;
-        }
-      }
-      
-      // 2. 如果本地没有找到，尝试从数据库加载
-      if (!foundProject) {
-        try {
-          const apiBase = getApiBaseUrl();
-          const numericId = parseInt(projectId, 10);
-          if (!isNaN(numericId)) {
-            const response = await fetch(
-              `${apiBase}/api/trpc/insar.getProject?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`
-            );
-            if (response.ok) {
-              const data = await response.json();
-              const dbProject = data?.result?.data?.json;
-              if (dbProject) {
-                // 将数据库项目转换为前端格式
-                foundProject = {
-                  id: dbProject.id,
-                  name: dbProject.name,
-                  description: dbProject.description,
-                  location: dbProject.location,
-                  startDate: dbProject.startDate,
-                  endDate: dbProject.endDate,
-                  satellite: dbProject.satellite,
-                  orbitDirection: dbProject.orbitDirection,
-                  polarization: dbProject.polarization,
-                  status: dbProject.status || "created",
-                  progress: dbProject.progress || 0,
-                  createdAt: dbProject.createdAt || new Date().toISOString(),
-                  bounds: parseBoundsFromLocation(dbProject.location),
-                };
-                
-                // 保存到本地存储
-                const localProjects = stored ? JSON.parse(stored) : [];
-                localProjects.push(foundProject);
-                await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(localProjects));
-              }
-            }
-          }
-        } catch (dbError) {
-          console.warn("从数据库加载项目失败:", dbError);
-        }
-      }
-      
-      if (foundProject) {
-        setProject(foundProject);
-        
-        // 如果项目正在处理中，恢复轮询
-        if (foundProject.status === "processing") {
-          const savedTaskId = await AsyncStorage.getItem(`task_${projectId}`);
-          if (savedTaskId) {
-            setTaskId(savedTaskId);
-            startPolling(savedTaskId);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load project:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [projectId]);
-  
   // 从 location 字符串解析 bounds
   const parseBoundsFromLocation = (location: string | undefined): Project["bounds"] | undefined => {
     if (!location) return undefined;
@@ -233,17 +166,185 @@ export default function ProjectDetailScreen() {
     return undefined;
   };
 
+  // 从本地存储和数据库加载项目
+  const loadProject = useCallback(async () => {
+    console.log("[loadProject] ====== STARTING ======");
+    console.log("[loadProject] projectId:", projectId, "type:", typeof projectId);
+    
+    // 如果 projectId 为空，直接返回
+    if (!projectId) {
+      console.log("[loadProject] No projectId, returning early");
+      setIsLoading(false);
+      return;
+    }
+    
+    try {
+      let foundProject: Project | null = null;
+      
+      // 直接从数据库加载
+      console.log("[loadProject] Loading from database...");
+      const apiBase = getApiBaseUrl();
+      console.log("[loadProject] API base:", apiBase);
+      
+      if (!apiBase) {
+        console.log("[loadProject] ERROR: No API base URL!");
+        setIsLoading(false);
+        return;
+      }
+      
+      const numericId = parseInt(projectId, 10);
+      console.log("[loadProject] Numeric ID:", numericId);
+      
+      if (!isNaN(numericId)) {
+        const url = `${apiBase}/api/trpc/insar.getProject?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`;
+        console.log("[loadProject] Fetching from:", url);
+        
+        const response = await fetch(url);
+        console.log("[loadProject] Response status:", response.status);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log("[loadProject] Response data:", JSON.stringify(data).substring(0, 200));
+          const dbProject = data?.result?.data?.json;
+          
+          if (dbProject) {
+            // 将数据库项目转换为前端格式
+            foundProject = {
+              id: dbProject.id,
+              name: dbProject.name,
+              description: dbProject.description,
+              location: dbProject.location,
+              startDate: dbProject.startDate,
+              endDate: dbProject.endDate,
+              satellite: dbProject.satellite,
+              orbitDirection: dbProject.orbitDirection,
+              polarization: dbProject.polarization,
+              status: dbProject.status || "created",
+              progress: dbProject.progress || 0,
+              createdAt: dbProject.createdAt || new Date().toISOString(),
+              bounds: parseBoundsFromLocation(dbProject.location),
+            };
+            console.log("[loadProject] Parsed project:", foundProject.name);
+          }
+        } else {
+          console.log("[loadProject] Response not ok:", response.status, response.statusText);
+        }
+      }
+      
+      if (foundProject) {
+        console.log("[loadProject] Found project:", foundProject.name, "status:", foundProject.status);
+        setProject(foundProject);
+        
+        // 如果项目正在处理中，恢复轮询
+        if (foundProject.status === "processing") {
+          const savedTaskId = await AsyncStorage.getItem(`task_${projectId}`);
+          console.log("[loadProject] Project is processing, savedTaskId:", savedTaskId);
+          if (savedTaskId) {
+            setTaskId(savedTaskId);
+            startPolling(savedTaskId);
+          }
+        }
+      } else {
+        console.log("[loadProject] Project not found for id:", projectId);
+      }
+    } catch (error) {
+      console.error("[loadProject] Failed to load project:", error);
+    } finally {
+      console.log("[loadProject] Setting isLoading to false");
+      setIsLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
   useEffect(() => {
-    loadProject();
-    loadDatabaseData(); // 加载数据库中的处理步骤和日志
+    console.log("[useEffect] Running with projectId:", projectId);
+    
+    // 立即开始加载，不等待
+    const loadProjectData = async () => {
+      if (!projectId) {
+        console.log("[useEffect] No projectId");
+        setIsLoading(false);
+        return;
+      }
+      
+      const numericId = parseInt(projectId, 10);
+      if (isNaN(numericId)) {
+        console.log("[useEffect] Invalid numeric ID");
+        setIsLoading(false);
+        return;
+      }
+      
+      console.log("[useEffect] Loading project ID:", numericId);
+      
+      try {
+        // 直接使用 getApiBaseUrl，它会在内部处理 window 检查
+        const apiBase = getApiBaseUrl();
+        
+        // 如果没有 API base，尝试从当前页面推断
+        let finalApiBase = apiBase;
+        if (!finalApiBase && typeof window !== "undefined" && window.location) {
+          const { protocol, hostname } = window.location;
+          const apiHostname = hostname.replace(/^8081-/, "3000-");
+          if (apiHostname !== hostname) {
+            finalApiBase = `${protocol}//${apiHostname}`;
+          }
+        }
+        
+        if (!finalApiBase) {
+          console.log("[useEffect] No API base URL available");
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log("[useEffect] Using API base:", finalApiBase);
+        
+        const url = `${finalApiBase}/api/trpc/insar.getProject?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`;
+        
+        const response = await fetch(url);
+        
+        if (response.ok) {
+          const data = await response.json();
+          const dbProject = data?.result?.data?.json;
+          
+          if (dbProject) {
+            const foundProject: Project = {
+              id: dbProject.id,
+              name: dbProject.name,
+              description: dbProject.description,
+              location: dbProject.location,
+              startDate: dbProject.startDate,
+              endDate: dbProject.endDate,
+              satellite: dbProject.satellite,
+              orbitDirection: dbProject.orbitDirection,
+              polarization: dbProject.polarization,
+              status: dbProject.status || "created",
+              progress: dbProject.progress || 0,
+              createdAt: dbProject.createdAt || new Date().toISOString(),
+              bounds: parseBoundsFromLocation(dbProject.location),
+            };
+            console.log("[useEffect] Loaded project:", foundProject.name);
+            setProject(foundProject);
+          }
+        } else {
+          console.log("[useEffect] API error:", response.status);
+        }
+      } catch (error) {
+        console.error("[useEffect] Error:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadProjectData();
+    loadDatabaseData();
     
     return () => {
-      // 清理轮询
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
       }
     };
-  }, [loadProject, loadDatabaseData]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // 更新本地存储中的项目状态
   const updateProjectInStorage = async (updates: Partial<Project>) => {
@@ -265,19 +366,44 @@ export default function ProjectDetailScreen() {
 
   // 轮询处理状态
   const startPolling = (newTaskId: string) => {
+    console.log("[startPolling] Starting polling for taskId:", newTaskId);
+    
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
     }
 
     const pollStatus = async () => {
+      console.log("[pollStatus] Polling...");
       try {
         // 获取处理状态 - 使用正确的 tRPC 格式
-        const apiBase = getApiBaseUrl();
-        const status = await fetch(`${apiBase}/api/trpc/realInsar.getStatus?input=${encodeURIComponent(JSON.stringify({ json: { taskId: newTaskId } }))}`);
+        let apiBase = getApiBaseUrl();
+        
+        // 如果没有 API base，尝试从当前页面推断
+        if (!apiBase && typeof window !== "undefined" && window.location) {
+          const { protocol, hostname } = window.location;
+          const apiHostname = hostname.replace(/^8081-/, "3000-");
+          if (apiHostname !== hostname) {
+            apiBase = `${protocol}//${apiHostname}`;
+          }
+        }
+        
+        console.log("[pollStatus] API base:", apiBase);
+        
+        if (!apiBase) {
+          console.error("[pollStatus] No API base URL!");
+          return;
+        }
+        
+        const statusUrl = `${apiBase}/api/trpc/realInsar.getStatus?input=${encodeURIComponent(JSON.stringify({ json: { taskId: newTaskId } }))}`;
+        console.log("[pollStatus] Fetching status from:", statusUrl);
+        
+        const status = await fetch(statusUrl);
         const statusData = await status.json();
+        console.log("[pollStatus] Status response:", JSON.stringify(statusData).substring(0, 200));
         
         if (statusData?.result?.data?.json) {
           const taskStatus = statusData.result.data.json;
+          console.log("[pollStatus] Task status:", taskStatus.status, "progress:", taskStatus.progress, "step:", taskStatus.currentStep);
           
           // 更新进度
           await updateProjectInStorage({ progress: taskStatus.progress || 0 });
@@ -314,24 +440,33 @@ export default function ProjectDetailScreen() {
         }
 
         // 获取日志
-        const logs = await fetch(`${apiBase}/api/trpc/realInsar.getLogs?input=${encodeURIComponent(JSON.stringify({ json: { taskId: newTaskId, offset: 0, limit: 50 } }))}`);
+        const logsUrl = `${apiBase}/api/trpc/realInsar.getLogs?input=${encodeURIComponent(JSON.stringify({ json: { taskId: newTaskId, offset: 0, limit: 50 } }))}`;
+        console.log("[pollStatus] Fetching logs from:", logsUrl);
+        
+        const logs = await fetch(logsUrl);
         const logsData = await logs.json();
+        console.log("[pollStatus] Logs response:", JSON.stringify(logsData).substring(0, 200));
         
         if (logsData?.result?.data?.json?.logs) {
           const newLogs = logsData.result.data.json.logs.map((log: any) => 
             `[${log.level}] ${log.step}: ${log.message}`
           );
+          console.log("[pollStatus] Setting", newLogs.length, "logs");
           setProcessingLogs(newLogs);
+        } else {
+          console.log("[pollStatus] No logs in response");
         }
       } catch (error) {
-        console.error("Polling error:", error);
+        console.error("[pollStatus] Error:", error);
       }
     };
 
     // 立即执行一次
+    console.log("[startPolling] Executing first poll...");
     pollStatus();
     
     // 每 2 秒轮询一次
+    console.log("[startPolling] Setting up interval...");
     pollingRef.current = setInterval(pollStatus, 2000);
   };
 
@@ -533,11 +668,13 @@ export default function ProjectDetailScreen() {
     }
   };
 
+  console.log("[Render] isLoading:", isLoading, "project:", project?.name, "projectId:", projectId);
+  
   if (isLoading) {
     return (
       <ScreenContainer className="flex-1 items-center justify-center">
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text className="text-muted mt-4">加载中...</Text>
+        <Text className="text-muted mt-4">加载中... (ID: {projectId || "undefined"})</Text>
       </ScreenContainer>
     );
   }
