@@ -1046,3 +1046,23 @@
   - 116 个测试用例通过
   - API 服务正常运行
 
+
+
+## 第 31 阶段：SBAS 时间序列分析功能
+
+### SBAS 核心算法
+- [x] 设计 SBAS 算法和数据结构
+  - SARImage, InterferometricPair, SBASConfig, SBASResult 类型定义
+- [x] 实现 SBAS 核心算法
+  - 小基线干涉对选择（时间基线 + 空间基线约束）
+  - 相干性估计和阈值过滤
+  - SVD 反演计算累积形变
+  - 形变速率计算
+- [x] 创建时间序列可视化
+  - 累积形变时间序列图
+  - LOS 形变速率图
+  - Python 可视化脚本 (visualize_sbas.py)
+- [x] 集成到后端 API
+  - startSBASAnalysis, getSBASStatus, getSBASLogs, getSBASResult, cancelSBASAnalysis, listSBASTasks
+- [x] 创建单元测试 (sbas-processor.test.ts)
+
