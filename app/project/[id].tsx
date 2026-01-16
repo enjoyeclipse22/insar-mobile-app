@@ -466,8 +466,60 @@ export default function ProjectDetailScreen() {
               "项目选项",
               "",
               [
-                { text: "查看日志", onPress: () => router.push(`/processing-monitor?projectId=${projectId}&taskId=${taskId || ""}`) },
-                { text: "查看结果", onPress: () => router.push(`/results-viewer?projectId=${projectId}`) },
+                { 
+                  text: "编辑项目", 
+                  onPress: () => router.push(`/project/edit/${projectId}`) 
+                },
+                { 
+                  text: "查看日志", 
+                  onPress: () => router.push(`/processing-monitor?projectId=${projectId}&taskId=${taskId || ""}`) 
+                },
+                { 
+                  text: "查看结果", 
+                  onPress: () => router.push(`/results-viewer?projectId=${projectId}`) 
+                },
+                { 
+                  text: "删除项目", 
+                  style: "destructive",
+                  onPress: () => {
+                    Alert.alert(
+                      "确认删除",
+                      "确定要删除这个项目吗？此操作不可撤销。",
+                      [
+                        { text: "取消", style: "cancel" },
+                        { 
+                          text: "删除", 
+                          style: "destructive",
+                          onPress: async () => {
+                            try {
+                              // 从数据库删除
+                              const numericId = parseInt(projectId, 10);
+                              if (!isNaN(numericId)) {
+                                const apiBase = getApiBaseUrl();
+                                await fetch(`${apiBase}/api/trpc/insar.deleteProject`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ json: { projectId: numericId } }),
+                                });
+                              }
+                              // 从本地存储删除
+                              const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+                              if (stored) {
+                                const projects = JSON.parse(stored);
+                                const filtered = projects.filter((p: any) => p.id.toString() !== projectId);
+                                await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(filtered));
+                              }
+                              Alert.alert("已删除", "项目已成功删除");
+                              router.back();
+                            } catch (error) {
+                              Alert.alert("错误", "删除失败，请重试");
+                            }
+                          }
+                        },
+                      ]
+                    );
+                  }
+                },
                 { text: "取消", style: "cancel" },
               ]
             );

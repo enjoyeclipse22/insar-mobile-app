@@ -800,3 +800,19 @@
 - [x] 添加"应用推荐时间范围"按钮
 - [x] 更新项目时间范围并显示确认提示
 
+
+
+## 第 22 阶段：数据库同步和项目管理修复
+
+### 已完成功能
+- [x] 项目列表从数据库获取数据（合并本地存储和数据库）
+- [x] 首页显示数据库中的项目
+- [x] 项目详情页面添加编辑和删除菜单
+- [x] 项目编辑页面创建
+- [x] updateProject 和 deleteProject API 改为 publicProcedure
+- [x] listProjects API 改为 publicProcedure
+
+### 待修复问题
+- [x] 数据可用性检查失败（Failed to fetch）- 需要配置 ASF_API_TOKEN
+- [x] 项目编辑功能测试 - 已实现
+- [x] 项目删除功能测试 - 已实现

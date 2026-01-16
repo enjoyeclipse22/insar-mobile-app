@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 interface Project {
   id: number;
@@ -24,18 +25,68 @@ export default function HomeScreen() {
   const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 从本地存储加载项目
+  // 从本地存储和数据库合并加载项目
   const loadProjects = useCallback(async () => {
     try {
+      // 从本地存储获取项目
       const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+      let localProjects: Project[] = [];
       if (stored) {
-        const projects = JSON.parse(stored);
-        // 按创建时间倒序排列
-        projects.sort((a: Project, b: Project) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setRecentProjects(projects);
+        localProjects = JSON.parse(stored);
       }
+
+      // 尝试从数据库获取项目
+      let dbProjects: Project[] = [];
+      try {
+        const apiBase = getApiBaseUrl();
+        const response = await fetch(
+          `${apiBase}/api/trpc/insar.listProjects?input=${encodeURIComponent(JSON.stringify({ json: {} }))}`
+        );
+        const data = await response.json();
+        
+        if (data?.result?.data?.json && Array.isArray(data.result.data.json)) {
+          dbProjects = data.result.data.json.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            location: p.location || "",
+            status: p.status || "created",
+            createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+            progress: p.progress || 0,
+          }));
+        }
+      } catch (err) {
+        console.log("Failed to fetch from database, using local storage only");
+      }
+
+      // 合并数据库项目和本地项目
+      const allProjects: Project[] = [];
+      const seenIds = new Set<string>();
+
+      // 首先添加数据库中的项目
+      for (const p of dbProjects) {
+        allProjects.push(p);
+        seenIds.add(`db_${p.id}`);
+      }
+
+      // 添加本地项目（避免重复）
+      for (const p of localProjects) {
+        const localId = String(p.id);
+        // 检查是否已经从数据库加载过（通过名称匹配）
+        const existsInDb = allProjects.some(
+          (dbP) => dbP.name === p.name || String(dbP.id) === localId
+        );
+        if (!existsInDb && !seenIds.has(localId)) {
+          allProjects.push(p);
+          seenIds.add(localId);
+        }
+      }
+
+      // 按创建时间倒序排列
+      allProjects.sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      
+      setRecentProjects(allProjects);
     } catch (error) {
       console.error("Failed to load projects:", error);
     } finally {

@@ -5,6 +5,7 @@ import { useColors } from "@/hooks/use-colors";
 import { useState, useCallback } from "react";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getApiBaseUrl } from "@/constants/oauth";
 
 interface Project {
   id: string;
@@ -30,20 +31,68 @@ export default function ProjectsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // 从本地存储加载项目
+  // 从本地存储和数据库合并加载项目
   const loadProjects = useCallback(async () => {
     try {
+      // 从本地存储获取项目
       const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
+      let localProjects: Project[] = [];
       if (stored) {
-        const loadedProjects = JSON.parse(stored);
-        // 按创建时间倒序排列
-        loadedProjects.sort((a: Project, b: Project) => 
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setProjects(loadedProjects);
-      } else {
-        setProjects([]);
+        localProjects = JSON.parse(stored);
       }
+
+      // 尝试从数据库获取项目
+      let dbProjects: Project[] = [];
+      try {
+        const apiBase = getApiBaseUrl();
+        const response = await fetch(
+          `${apiBase}/api/trpc/insar.listProjects?input=${encodeURIComponent(JSON.stringify({ json: {} }))}`
+        );
+        const data = await response.json();
+        
+        if (data?.result?.data?.json && Array.isArray(data.result.data.json)) {
+          dbProjects = data.result.data.json.map((p: any) => ({
+            id: String(p.id),
+            name: p.name,
+            location: p.location || "",
+            status: p.status || "created",
+            createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
+            progress: p.progress || 0,
+          }));
+        }
+      } catch (err) {
+        console.log("Failed to fetch from database, using local storage only");
+      }
+
+      // 合并数据库项目和本地项目
+      const allProjects: Project[] = [];
+      const seenIds = new Set<string>();
+
+      // 首先添加数据库中的项目
+      for (const p of dbProjects) {
+        allProjects.push(p);
+        seenIds.add(`db_${p.id}`);
+      }
+
+      // 添加本地项目（避免重复）
+      for (const p of localProjects) {
+        const localId = String(p.id);
+        // 检查是否已经从数据库加载过（通过名称匹配）
+        const existsInDb = allProjects.some(
+          (dbP) => dbP.name === p.name || String(dbP.id) === localId
+        );
+        if (!existsInDb && !seenIds.has(localId)) {
+          allProjects.push(p);
+          seenIds.add(localId);
+        }
+      }
+
+      // 按创建时间倒序排列
+      allProjects.sort((a, b) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      
+      setProjects(allProjects);
     } catch (error) {
       console.error("加载项目失败:", error);
       setProjects([]);
@@ -209,54 +258,49 @@ export default function ProjectsScreen() {
   );
 
   return (
-    <ScreenContainer className="p-0">
-      <View style={{ backgroundColor: colors.background, flex: 1 }}>
-        {/* Header */}
-        <View
-          style={{
-            backgroundColor: colors.primary,
-            paddingHorizontal: 24,
-            paddingVertical: 16,
-            paddingTop: 12,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <TouchableOpacity onPress={() => router.back()}>
-            <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 20, fontWeight: "700", color: "#FFFFFF" }}>
-            所有项目 ({projects.length})
-          </Text>
-          <TouchableOpacity onPress={() => router.push("../create-project")}>
-            <MaterialIcons name="add" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Loading State */}
-        {isLoading ? (
-          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={{ marginTop: 16, color: colors.muted }}>加载项目中...</Text>
-          </View>
-        ) : (
-          /* Projects List */
-          <ScrollView 
-            style={{ flex: 1, paddingHorizontal: 24, paddingVertical: 16 }}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={onRefresh}
-                colors={[colors.primary]}
-                tintColor={colors.primary}
-              />
-            }
-          >
-            {projects.length === 0 ? renderEmptyState() : projects.map(renderProjectCard)}
-          </ScrollView>
-        )}
+    <ScreenContainer>
+      {/* Header */}
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          backgroundColor: colors.primary,
+        }}
+      >
+        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+          <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        <Text style={{ fontSize: 18, fontWeight: "600", color: "#FFFFFF" }}>
+          项目列表
+        </Text>
+        <TouchableOpacity onPress={() => router.push("../create-project")} style={{ padding: 8 }}>
+          <MaterialIcons name="add" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
       </View>
+
+      {isLoading ? (
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={{ marginTop: 12, color: colors.muted }}>加载中...</Text>
+        </View>
+      ) : (
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, flexGrow: 1 }}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
+          }
+        >
+          {projects.length === 0 ? (
+            renderEmptyState()
+          ) : (
+            projects.map(renderProjectCard)
+          )}
+        </ScrollView>
+      )}
     </ScreenContainer>
   );
 }

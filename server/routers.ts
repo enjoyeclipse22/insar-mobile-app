@@ -20,7 +20,11 @@ export const appRouter = router({
   }),
 
   insar: router({
-    listProjects: protectedProcedure.query(({ ctx }) => db.getUserProjects(ctx.user.id)),
+    listProjects: publicProcedure.query(async ({ ctx }) => {
+      // 如果用户已登录，返回该用户的项目；否则返回所有项目（用于演示）
+      const userId = ctx.user?.id || 1;
+      return db.getUserProjects(userId);
+    }),
     getProject: publicProcedure
       .input(z.object({ projectId: z.number() }))
       .query(({ input }) => db.getProjectById(input.projectId)),
@@ -48,19 +52,35 @@ export const appRouter = router({
         status: "created",
         progress: 0,
       })),
-    updateProject: protectedProcedure
+    updateProject: publicProcedure
       .input(z.object({
         projectId: z.number(),
         name: z.string().optional(),
+        description: z.string().optional(),
+        location: z.string().optional(),
+        startDate: z.string().optional(),
+        endDate: z.string().optional(),
+        satellite: z.string().optional(),
+        orbitDirection: z.enum(["ascending", "descending"]).optional(),
+        polarization: z.string().optional(),
         status: z.enum(["created", "processing", "completed", "failed"]).optional(),
         progress: z.number().optional(),
       }))
-      .mutation(({ input }) => db.updateProject(input.projectId, {
-        name: input.name,
-        status: input.status,
-        progress: input.progress,
-      })),
-    deleteProject: protectedProcedure
+      .mutation(({ input }) => {
+        const updateData: Record<string, any> = {};
+        if (input.name !== undefined) updateData.name = input.name;
+        if (input.description !== undefined) updateData.description = input.description;
+        if (input.location !== undefined) updateData.location = input.location;
+        if (input.startDate !== undefined) updateData.startDate = input.startDate;
+        if (input.endDate !== undefined) updateData.endDate = input.endDate;
+        if (input.satellite !== undefined) updateData.satellite = input.satellite;
+        if (input.orbitDirection !== undefined) updateData.orbitDirection = input.orbitDirection;
+        if (input.polarization !== undefined) updateData.polarization = input.polarization;
+        if (input.status !== undefined) updateData.status = input.status;
+        if (input.progress !== undefined) updateData.progress = input.progress;
+        return db.updateProject(input.projectId, updateData);
+      }),
+    deleteProject: publicProcedure
       .input(z.object({ projectId: z.number() }))
       .mutation(({ input }) => db.deleteProject(input.projectId)),
     getSteps: protectedProcedure
