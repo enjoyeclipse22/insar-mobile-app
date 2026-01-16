@@ -260,7 +260,7 @@ export default function ProjectDetailScreen() {
     console.log("[useEffect] Running with projectId:", projectId);
     
     // 立即开始加载，不等待
-    const loadProjectData = async () => {
+    const loadProjectData = async (retryCount = 0) => {
       if (!projectId) {
         console.log("[useEffect] No projectId");
         setIsLoading(false);
@@ -274,7 +274,7 @@ export default function ProjectDetailScreen() {
         return;
       }
       
-      console.log("[useEffect] Loading project ID:", numericId);
+      console.log("[useEffect] Loading project ID:", numericId, "retry:", retryCount);
       
       try {
         // 直接使用 getApiBaseUrl，它会在内部处理 window 检查
@@ -324,18 +324,34 @@ export default function ProjectDetailScreen() {
             };
             console.log("[useEffect] Loaded project:", foundProject.name);
             setProject(foundProject);
+            setIsLoading(false);
+            return;
+          } else if (retryCount < 3) {
+            // 项目未找到，可能数据库写入延迟，重试
+            console.log("[useEffect] Project not found, retrying in 500ms...");
+            setTimeout(() => loadProjectData(retryCount + 1), 500);
+            return;
           }
         } else {
           console.log("[useEffect] API error:", response.status);
+          if (retryCount < 3) {
+            console.log("[useEffect] Retrying in 500ms...");
+            setTimeout(() => loadProjectData(retryCount + 1), 500);
+            return;
+          }
         }
       } catch (error) {
         console.error("[useEffect] Error:", error);
-      } finally {
-        setIsLoading(false);
+        if (retryCount < 3) {
+          console.log("[useEffect] Retrying in 500ms...");
+          setTimeout(() => loadProjectData(retryCount + 1), 500);
+          return;
+        }
       }
+      setIsLoading(false);
     };
     
-    loadProjectData();
+    loadProjectData(0);
     loadDatabaseData();
     
     return () => {
@@ -684,14 +700,26 @@ export default function ProjectDetailScreen() {
       <ScreenContainer className="flex-1 items-center justify-center p-6">
         <MaterialIcons name="error-outline" size={64} color={colors.muted} />
         <Text className="text-foreground text-xl font-semibold mt-4">项目不存在</Text>
-        <Text className="text-muted text-center mt-2">无法找到指定的项目</Text>
-        <TouchableOpacity
-          className="mt-6 px-6 py-3 rounded-xl"
-          style={{ backgroundColor: colors.primary }}
-          onPress={() => router.back()}
-        >
-          <Text className="text-white font-semibold">返回</Text>
-        </TouchableOpacity>
+        <Text className="text-muted text-center mt-2">无法找到指定的项目 (ID: {projectId})</Text>
+        <View className="flex-row gap-4 mt-6">
+          <TouchableOpacity
+            className="px-6 py-3 rounded-xl"
+            style={{ backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }}
+            onPress={() => {
+              setIsLoading(true);
+              loadProject();
+            }}
+          >
+            <Text className="text-foreground font-semibold">重试</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            className="px-6 py-3 rounded-xl"
+            style={{ backgroundColor: colors.primary }}
+            onPress={() => router.back()}
+          >
+            <Text className="text-white font-semibold">返回</Text>
+          </TouchableOpacity>
+        </View>
       </ScreenContainer>
     );
   }

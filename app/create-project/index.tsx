@@ -400,9 +400,11 @@ export default function CreateProjectScreen() {
             
             setIsCreating(false);
             // 使用数据库 ID 跳转到项目详情页
+            // 增加延迟确保数据库写入完成
+            console.log("项目创建成功，即将跳转到项目详情页，ID:", dbId);
             setTimeout(() => {
-              router.push(`/project/${dbId}`);
-            }, 100);
+              router.replace(`/project/${dbId}`);
+            }, 500);
             return;
           }
         } else {
