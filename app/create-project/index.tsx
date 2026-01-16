@@ -399,8 +399,10 @@ export default function CreateProjectScreen() {
             await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(updatedProjects));
             
             setIsCreating(false);
-            // 使用数据库 ID 跳转
-            router.replace(`/project/${dbId}`);
+            // 使用数据库 ID 跳转到项目详情页
+            setTimeout(() => {
+              router.push(`/project/${dbId}`);
+            }, 100);
             return;
           }
         } else {
@@ -412,7 +414,9 @@ export default function CreateProjectScreen() {
       
       setIsCreating(false);
       // 跳转到项目详情页（使用本地 ID）
-      router.replace(`/project/${localId}`);
+      setTimeout(() => {
+        router.push(`/project/${localId}`);
+      }, 100);
     } catch (error) {
       setIsCreating(false);
       Alert.alert("错误", `创建项目失败: ${error}`);
