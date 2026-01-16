@@ -609,8 +609,19 @@ async function checkDataAvailability(
   }
 
   // 构建搜索参数
+  // ASF API 需要使用完整的平台名称，如 "Sentinel-1A" 或 "Sentinel-1"
+  // S1A -> Sentinel-1A, S1B -> Sentinel-1B, Sentinel-1 -> Sentinel-1
+  let platformParam = satellite;
+  if (satellite === "S1A") {
+    platformParam = "Sentinel-1A";
+  } else if (satellite === "S1B") {
+    platformParam = "Sentinel-1B";
+  } else if (satellite === "Sentinel-1" || satellite === "S1") {
+    platformParam = "Sentinel-1"; // 搜索所有 Sentinel-1 数据
+  }
+  
   const searchParams = new URLSearchParams({
-    platform: satellite === "Sentinel-1" ? "Sentinel-1" : satellite,
+    platform: platformParam,
     processingLevel: "SLC",
     beamMode: "IW",
     bbox: `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`,
