@@ -376,6 +376,30 @@ async function startRealProcessing(
             } : undefined
           );
         }
+
+        // 保存图像文件 (可视化 PNG)
+        if (result.outputs.unwrappedPhaseImage) {
+          await saveResultToDatabase(
+            projectId,
+            "unwrapped_phase" as any,
+            result.outputs.unwrappedPhaseImage,
+            "unwrapped_phase.png"
+          );
+        }
+
+        if (result.outputs.deformationImage) {
+          await saveResultToDatabase(
+            projectId,
+            "deformation" as any,
+            result.outputs.deformationImage,
+            "deformation.png",
+            result.statistics ? {
+              min: result.statistics.minDeformation || 0,
+              max: result.statistics.maxDeformation || 0,
+              mean: result.statistics.meanDeformation || 0,
+            } : undefined
+          );
+        }
       }
 
       // 保存最终日志
