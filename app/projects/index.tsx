@@ -291,7 +291,14 @@ export default function ProjectsScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 16, flexGrow: 1 }}
           refreshControl={
-            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
+            <RefreshControl 
+              refreshing={isRefreshing} 
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+              title="下拉刷新..."
+              titleColor={colors.muted}
+            />
           }
         >
           {projects.length === 0 ? (

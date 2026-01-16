@@ -1,4 +1,4 @@
-import { ScrollView, Text, View, TouchableOpacity, ActivityIndicator } from "react-native";
+import { ScrollView, Text, View, TouchableOpacity, ActivityIndicator, RefreshControl } from "react-native";
 import { useRouter } from "expo-router";
 import { ScreenContainer } from "@/components/screen-container";
 import { useColors } from "@/hooks/use-colors";
@@ -24,9 +24,13 @@ export default function HomeScreen() {
   const colors = useColors();
   const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 从本地存储和数据库合并加载项目
-  const loadProjects = useCallback(async () => {
+  const loadProjects = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    }
     try {
       // 从本地存储获取项目
       const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
@@ -91,8 +95,14 @@ export default function HomeScreen() {
       console.error("Failed to load projects:", error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, []);
+
+  // 下拉刷新处理函数
+  const onRefresh = useCallback(() => {
+    loadProjects(true);
+  }, [loadProjects]);
 
   // 页面获得焦点时重新加载数据
   useFocusEffect(
@@ -209,7 +219,20 @@ export default function HomeScreen() {
 
   return (
     <ScreenContainer className="p-0">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} style={{ backgroundColor: colors.background }}>
+      <ScrollView 
+        contentContainerStyle={{ flexGrow: 1 }} 
+        style={{ backgroundColor: colors.background }}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+            title="下拉刷新..."
+            titleColor={colors.muted}
+          />
+        }
+      >
         {/* Hero Section */}
         <View
           style={{
