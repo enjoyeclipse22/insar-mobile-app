@@ -1066,3 +1066,9 @@
   - startSBASAnalysis, getSBASStatus, getSBASLogs, getSBASResult, cancelSBASAnalysis, listSBASTasks
 - [x] 创建单元测试 (sbas-processor.test.ts)
 
+
+## Bug 修复 - 处理监控页面问题
+- [x] 修复 CQ 项目进入处理监控页面没有反应的问题
+  - 问题原因：项目未开始处理，没有 taskId，页面显示空白
+  - 解决方案：添加未处理状态提示，引导用户返回项目详情页开始处理
+

@@ -537,8 +537,25 @@ export default function ProcessingMonitorScreen() {
         <View className="flex-1 bg-surface rounded-xl border border-border overflow-hidden">
           {logs.length === 0 ? (
             <View className="flex-1 items-center justify-center p-8">
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text className="text-muted mt-4">等待日志...</Text>
+              {taskId ? (
+                <>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text className="text-muted mt-4">等待日志...</Text>
+                </>
+              ) : (
+                <>
+                  <MaterialIcons name="info-outline" size={48} color={colors.muted} />
+                  <Text className="text-muted mt-4 text-center">该项目尚未开始处理</Text>
+                  <Text className="text-muted mt-2 text-center text-sm">请返回项目详情页点击"开始处理"按钮</Text>
+                  <TouchableOpacity
+                    className="mt-4 px-6 py-3 rounded-xl"
+                    style={{ backgroundColor: colors.primary }}
+                    onPress={() => router.back()}
+                  >
+                    <Text className="text-white font-medium">返回项目详情</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           ) : (
             <FlatList
