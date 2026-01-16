@@ -355,14 +355,63 @@ export default function CreateProjectScreen() {
     };
     
     try {
-      // 保存到本地存储
+      // 同时保存到本地存储和数据库
+      // 1. 保存到本地存储
       const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
       const projects = stored ? JSON.parse(stored) : [];
       projects.push(projectData);
       await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
       
+      // 2. 同时保存到数据库（通过 tRPC API）
+      try {
+        const { getApiBaseUrl } = await import("@/constants/oauth");
+        const apiBase = getApiBaseUrl();
+        const response = await fetch(`${apiBase}/api/trpc/insar.createProject`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            json: {
+              name: projectName,
+              description: `InSAR processing project for ${location}`,
+              location: locationWithBounds,
+              startDate,
+              endDate,
+              satellite,
+              orbitDirection: orbit,
+              polarization,
+            },
+          }),
+        });
+        
+        if (response.ok) {
+          const result = await response.json();
+          console.log("项目已保存到数据库:", result);
+          // 如果数据库返回了 ID，更新本地存储中的 ID
+          if (result?.result?.data?.json?.id) {
+            const dbId = result.result.data.json.id;
+            projectData.id = dbId;
+            // 更新本地存储中的项目 ID
+            const updatedProjects = projects.map((p: any) => 
+              p.id === localId ? { ...p, id: dbId } : p
+            );
+            await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(updatedProjects));
+            
+            setIsCreating(false);
+            // 使用数据库 ID 跳转
+            router.replace(`/project/${dbId}`);
+            return;
+          }
+        } else {
+          console.warn("保存到数据库失败，但本地存储成功");
+        }
+      } catch (dbError) {
+        console.warn("数据库保存失败，但本地存储成功:", dbError);
+      }
+      
       setIsCreating(false);
-      // 跳转到项目详情页
+      // 跳转到项目详情页（使用本地 ID）
       router.replace(`/project/${localId}`);
     } catch (error) {
       setIsCreating(false);

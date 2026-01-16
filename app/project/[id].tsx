@@ -141,23 +141,72 @@ export default function ProjectDetailScreen() {
     }
   }, [projectId]);
 
-  // 从本地存储加载项目
+  // 从本地存储和数据库加载项目
   const loadProject = useCallback(async () => {
     try {
+      let foundProject: Project | null = null;
+      
+      // 1. 先从本地存储加载
       const stored = await AsyncStorage.getItem(PROJECTS_STORAGE_KEY);
       if (stored) {
         const projects: Project[] = JSON.parse(stored);
         const found = projects.find(p => p.id.toString() === projectId);
         if (found) {
-          setProject(found);
-          
-          // 如果项目正在处理中，恢复轮询
-          if (found.status === "processing") {
-            const savedTaskId = await AsyncStorage.getItem(`task_${projectId}`);
-            if (savedTaskId) {
-              setTaskId(savedTaskId);
-              startPolling(savedTaskId);
+          foundProject = found;
+        }
+      }
+      
+      // 2. 如果本地没有找到，尝试从数据库加载
+      if (!foundProject) {
+        try {
+          const apiBase = getApiBaseUrl();
+          const numericId = parseInt(projectId, 10);
+          if (!isNaN(numericId)) {
+            const response = await fetch(
+              `${apiBase}/api/trpc/insar.getProject?input=${encodeURIComponent(JSON.stringify({ json: { projectId: numericId } }))}`
+            );
+            if (response.ok) {
+              const data = await response.json();
+              const dbProject = data?.result?.data?.json;
+              if (dbProject) {
+                // 将数据库项目转换为前端格式
+                foundProject = {
+                  id: dbProject.id,
+                  name: dbProject.name,
+                  description: dbProject.description,
+                  location: dbProject.location,
+                  startDate: dbProject.startDate,
+                  endDate: dbProject.endDate,
+                  satellite: dbProject.satellite,
+                  orbitDirection: dbProject.orbitDirection,
+                  polarization: dbProject.polarization,
+                  status: dbProject.status || "created",
+                  progress: dbProject.progress || 0,
+                  createdAt: dbProject.createdAt || new Date().toISOString(),
+                  bounds: parseBoundsFromLocation(dbProject.location),
+                };
+                
+                // 保存到本地存储
+                const localProjects = stored ? JSON.parse(stored) : [];
+                localProjects.push(foundProject);
+                await AsyncStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(localProjects));
+              }
             }
+          }
+        } catch (dbError) {
+          console.warn("从数据库加载项目失败:", dbError);
+        }
+      }
+      
+      if (foundProject) {
+        setProject(foundProject);
+        
+        // 如果项目正在处理中，恢复轮询
+        if (foundProject.status === "processing") {
+          const savedTaskId = await AsyncStorage.getItem(`task_${projectId}`);
+          if (savedTaskId) {
+            setTaskId(savedTaskId);
+            startPolling(savedTaskId);
           }
         }
       }
@@ -167,6 +216,22 @@ export default function ProjectDetailScreen() {
       setIsLoading(false);
     }
   }, [projectId]);
+  
+  // 从 location 字符串解析 bounds
+  const parseBoundsFromLocation = (location: string | undefined): Project["bounds"] | undefined => {
+    if (!location) return undefined;
+    // 匹配格式: "xxx (28.16°N-32.20°N, 105.29°E-110.19°E)"
+    const match = location.match(/\((\d+\.?\d*)°N-(\d+\.?\d*)°N,\s*(\d+\.?\d*)°E-(\d+\.?\d*)°E\)/);
+    if (match) {
+      return {
+        south: parseFloat(match[1]),
+        north: parseFloat(match[2]),
+        west: parseFloat(match[3]),
+        east: parseFloat(match[4]),
+      };
+    }
+    return undefined;
+  };
 
   useEffect(() => {
     loadProject();
