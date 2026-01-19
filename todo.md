@@ -1126,3 +1126,25 @@
 - [x] 创建 run_insar.sh (Ubuntu)
 - [x] 创建 run_insar.bat (Windows)
 - [x] 创建使用说明文档 README.md
+
+
+## 第 37 阶段：Docker 一键化部署
+
+### Docker 配置
+- [ ] 创建 Dockerfile（包含 GMTSAR 编译）
+- [ ] 创建 docker-compose.yml
+- [ ] 创建 .dockerignore 文件
+- [ ] 创建 Docker 使用说明文档
+- [ ] 测试 Docker 构建和运行
+
+
+## 第 37 阶段：Docker 一键化部署
+
+### Docker 配置
+- [x] 创建 Dockerfile（包含 GMTSAR 编译，多阶段构建）
+- [x] 创建 docker-compose.yml
+- [x] 创建 .dockerignore 文件
+- [x] 创建 env.template 和 README.md
+- [x] 验证 Dockerfile 语法（通过）
+- [x] 验证 docker-compose.yml 语法（通过）
+- [ ] 构建 Docker 镜像（沙箱网络限制，需在真实服务器测试）

@@ -1,0 +1,150 @@
+#===============================================================================
+# PyGMTSAR InSAR Processing Environment
+# Docker Compose Configuration
+#
+# Usage:
+#   Start:    docker-compose up -d
+#   Stop:     docker-compose down
+#   Logs:     docker-compose logs -f
+#   Shell:    docker-compose exec insar bash
+#   Test:     docker-compose exec insar python3 /workspace/scripts/test_turkey_integration.py
+#
+# Author: InSAR Pro Team
+# Version: 1.0.0
+#===============================================================================
+
+services:
+  #=============================================================================
+  # Main InSAR Processing Service
+  #=============================================================================
+  insar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pygmtsar-insar:latest
+    container_name: insar-processor
+    
+    # Environment variables
+    environment:
+      - ASF_USERNAME=${ASF_USERNAME:-}
+      - ASF_PASSWORD=${ASF_PASSWORD:-}
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
+    
+    # Volume mounts
+    volumes:
+      # Data directory (input SAR data)
+      - ./data:/workspace/data
+      # Results directory (output products)
+      - ./results:/workspace/results
+      # Logs directory
+      - ./logs:/workspace/logs
+      # Custom scripts (optional)
+      - ./custom_scripts:/workspace/custom_scripts
+    
+    # Port mappings
+    ports:
+      # FastAPI service port
+      - "8000:8000"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import pygmtsar; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Keep container running
+    stdin_open: true
+    tty: true
+    
+    # Default command (interactive shell)
+    command: bash
+
+  #=============================================================================
+  # InSAR API Service (Optional)
+  #=============================================================================
+  insar-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pygmtsar-insar:latest
+    container_name: insar-api
+    
+    # Environment variables
+    environment:
+      - ASF_USERNAME=${ASF_USERNAME:-}
+      - ASF_PASSWORD=${ASF_PASSWORD:-}
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    
+    # Volume mounts
+    volumes:
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+      - ./logs:/workspace/logs
+    
+    # Port mappings
+    ports:
+      - "8001:8000"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Start API server
+    command: python3 /workspace/scripts/insar_service.py
+    
+    # Depends on main service
+    profiles:
+      - api
+
+#===============================================================================
+# Named Volumes (Optional - for persistent storage)
+#===============================================================================
+volumes:
+  insar-data:
+    driver: local
+  insar-results:
+    driver: local
+
+#===============================================================================
+# Networks
+#===============================================================================
+networks:
+  default:
+    name: insar-network
+    driver: bridge
