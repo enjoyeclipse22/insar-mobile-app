@@ -256,29 +256,40 @@ class InSARProcessor:
             # Check if data already exists
             existing_files = []
             if os.path.exists(self.config.data_dir):
-                existing_files = [f for f in os.listdir(self.config.data_dir) 
-                                 if f.endswith('.SAFE') or f.endswith('.zip')]
+                existing_safe = [f for f in os.listdir(self.config.data_dir) if f.endswith('.SAFE')]
+                if len(existing_safe) >= 4:
+                    # Check if xml files exist in SAFE directories
+                    xml_files = []
+                    for safe_dir in existing_safe:
+                        safe_path = os.path.join(self.config.data_dir, safe_dir)
+                        annot_dir = os.path.join(safe_path, 'annotation')
+                        if os.path.exists(annot_dir):
+                            xml_files.extend([f for f in os.listdir(annot_dir) if f.endswith('.xml')])
+                    if len(xml_files) >= 4:
+                        self._log(f"Data already downloaded: {len(existing_safe)} scenes found")
+                        self._complete_step(result, existing_safe, {"scenes_count": len(existing_safe)})
+                        return result
             
-            if len(existing_files) >= len(bursts):
-                self._log(f"Data already downloaded: {len(existing_files)} scenes found")
-                self._complete_step(result, existing_files, {"scenes_count": len(existing_files)})
-                return result
+            os.makedirs(self.config.data_dir, exist_ok=True)
             
-            # Download from ASF
+            # Download from ASF using correct API (matching turkey_insar_full.py)
             self._report_progress(ProcessingStep.DOWNLOAD_DATA, 10, "Authenticating with ASF...")
             
-            S1.download(
-                bursts,
-                self.config.data_dir,
-                asf_username=self.config.asf_username,
-                asf_password=self.config.asf_password
-            )
+            # Initialize ASF client with credentials
+            asf = ASF(self.config.asf_username, self.config.asf_password)
+            
+            # Download bursts one by one to avoid memory issues
+            self._report_progress(ProcessingStep.DOWNLOAD_DATA, 20, "Downloading bursts...")
+            download_result = asf.download(self.config.data_dir, bursts, n_jobs=1)
             
             self._report_progress(ProcessingStep.DOWNLOAD_DATA, 80, "Downloading orbit files...")
             
             # Download orbit files
-            scenes = S1.scan(self.config.data_dir)
-            ASF.download_orbits(scenes, self.config.data_dir)
+            try:
+                scenes = S1.scan_slc(self.config.data_dir)
+                S1.download_orbits(self.config.data_dir, scenes)
+            except Exception as e:
+                self._log(f"Warning: Orbit download issue: {e}")
             
             downloaded_files = [f for f in os.listdir(self.config.data_dir) 
                                if f.endswith('.SAFE') or f.endswith('.zip')]
@@ -303,7 +314,7 @@ class InSARProcessor:
         try:
             self._check_cancelled()
             
-            from pygmtsar import S1, DEM
+            from pygmtsar import S1, Tiles
             
             self._log("Downloading Copernicus DEM (3 arc-second)...")
             
@@ -315,12 +326,16 @@ class InSARProcessor:
                 self._complete_step(result, [dem_file])
                 return result
             
-            # Get AOI from scenes
-            scenes = S1.scan(self.config.data_dir)
+            os.makedirs(self.config.data_dir, exist_ok=True)
+            
+            # Get AOI from scenes (matching turkey_insar_full.py)
+            aoi = S1.scan_slc(self.config.data_dir)
+            self._aoi = aoi
             
             self._report_progress(ProcessingStep.DOWNLOAD_DEM, 30, "Downloading DEM...")
             
-            dem = DEM.download(scenes, filename=dem_file)
+            # Use Tiles class to download DEM (matching turkey_insar_full.py)
+            dem = Tiles().download_dem(aoi, filename=dem_file, product='3s')
             self._dem = dem
             
             self._complete_step(result, [dem_file], {"dem_shape": str(dem.shape) if hasattr(dem, 'shape') else "unknown"})
@@ -343,7 +358,7 @@ class InSARProcessor:
         try:
             self._check_cancelled()
             
-            from pygmtsar import S1, Landmask
+            from pygmtsar import S1, Tiles
             
             self._log("Downloading Landmask...")
             
@@ -355,12 +370,16 @@ class InSARProcessor:
                 self._complete_step(result, [landmask_file])
                 return result
             
-            # Get AOI from scenes
-            scenes = S1.scan(self.config.data_dir)
+            os.makedirs(self.config.data_dir, exist_ok=True)
+            
+            # Get AOI from scenes (matching turkey_insar_full.py)
+            if not hasattr(self, '_aoi') or self._aoi is None:
+                self._aoi = S1.scan_slc(self.config.data_dir)
             
             self._report_progress(ProcessingStep.DOWNLOAD_LANDMASK, 50, "Downloading landmask...")
             
-            landmask = Landmask.download(scenes, filename=landmask_file)
+            # Use Tiles class to download Landmask (matching turkey_insar_full.py)
+            landmask = Tiles().download_landmask(self._aoi, filename=landmask_file, product='3s')
             self._landmask = landmask
             
             self._complete_step(result, [landmask_file])
@@ -383,25 +402,28 @@ class InSARProcessor:
         try:
             self._check_cancelled()
             
-            from pygmtsar import S1, SBAS
+            from pygmtsar import S1, Stack
             
-            self._log("Initializing SBAS stack...")
+            self._log("Initializing Stack...")
             
-            scenes = S1.scan(self.config.data_dir)
+            # Scan SLC data (matching turkey_insar_full.py)
+            scenes = S1.scan_slc(self.config.data_dir)
             self._log(f"Found {len(scenes)} scenes")
             
-            self._report_progress(ProcessingStep.INITIALIZE_STACK, 30, "Creating SBAS object...")
+            self._report_progress(ProcessingStep.INITIALIZE_STACK, 30, "Creating Stack object...")
             
-            sbas = SBAS(scenes, self.config.work_dir)
+            # Initialize Stack (matching turkey_insar_full.py)
+            os.makedirs(self.config.work_dir, exist_ok=True)
+            sbas = Stack(self.config.work_dir, drop_if_exists=True).set_scenes(scenes)
             self._sbas = sbas
             
             self._report_progress(ProcessingStep.INITIALIZE_STACK, 60, "Computing reframe...")
             
-            sbas.reframe()
+            # Compute reframe (matching turkey_insar_full.py)
+            sbas.compute_reframe()
             
             self._complete_step(result, metadata={
-                "scenes_count": len(scenes),
-                "reference_date": str(sbas.reference) if hasattr(sbas, 'reference') else "unknown"
+                "scenes_count": len(scenes)
             })
             
         except Exception as e:
@@ -430,11 +452,17 @@ class InSARProcessor:
             self._log("Loading DEM...")
             self._report_progress(ProcessingStep.COMPUTE_ALIGNMENT, 10, "Loading DEM...")
             
-            self._sbas.load_dem(dem_file, self.config.aoi)
+            # Load DEM (matching turkey_insar_full.py)
+            if not hasattr(self, '_aoi') or self._aoi is None:
+                from pygmtsar import S1
+                self._aoi = S1.scan_slc(self.config.data_dir)
+            
+            self._sbas.load_dem(dem_file, self._aoi)
             
             self._report_progress(ProcessingStep.COMPUTE_ALIGNMENT, 30, "Computing alignment...")
             
-            self._sbas.align()
+            # Compute alignment (matching turkey_insar_full.py)
+            self._sbas.compute_align()
             
             self._complete_step(result)
             
@@ -462,7 +490,8 @@ class InSARProcessor:
             self._log(f"Computing geocoding at {self.config.resolution}m resolution...")
             self._report_progress(ProcessingStep.COMPUTE_GEOCODING, 30, "Computing radar transform...")
             
-            self._sbas.geocode(resolution=self.config.resolution)
+            # Compute geocoding (matching turkey_insar_full.py)
+            self._sbas.compute_geocode(self.config.resolution)
             
             self._complete_step(result, metadata={"resolution": self.config.resolution})
             
@@ -484,47 +513,61 @@ class InSARProcessor:
         try:
             self._check_cancelled()
             
+            import numpy as np
+            
             if self._sbas is None:
                 raise ValueError("Stack not initialized. Call initialize_stack() first.")
             
             self._log("Computing interferogram...")
             
-            # Get pairs
-            pairs = self._sbas.pairs()
+            # Get pairs (matching turkey_insar_full.py)
+            pairs = [self._sbas.to_dataframe().index.unique()]
             self._log(f"Processing pairs: {pairs}")
+            
+            # Load data (matching turkey_insar_full.py)
+            topo = self._sbas.get_topo()
+            data = self._sbas.open_data()
+            self._topo = topo
             
             self._report_progress(ProcessingStep.COMPUTE_INTERFEROGRAM, 10, "Computing multilooking...")
             
-            # Multilooking
-            phase_mlook = self._sbas.multilooking(pairs)
+            # Multilooking (matching turkey_insar_full.py)
+            intensity_mlook = self._sbas.multilooking(np.square(np.abs(data)), wavelength=400, coarsen=(12, 48))
             
             self._report_progress(ProcessingStep.COMPUTE_INTERFEROGRAM, 30, "Computing phase difference...")
             
-            # Phase difference
-            phase_mlook = self._sbas.phasediff(phase_mlook)
+            # Phase difference (matching turkey_insar_full.py)
+            phase = self._sbas.phasediff(pairs, data, topo)
+            phase_mlook = self._sbas.multilooking(phase, wavelength=400, coarsen=(12, 48))
             
             self._report_progress(ProcessingStep.COMPUTE_INTERFEROGRAM, 50, "Computing correlation...")
             
-            # Correlation
-            corr_mlook = self._sbas.correlation(phase_mlook)
+            # Correlation (matching turkey_insar_full.py)
+            corr_mlook = self._sbas.correlation(phase_mlook, intensity_mlook)
             
             self._report_progress(ProcessingStep.COMPUTE_INTERFEROGRAM, 70, "Applying Goldstein filter...")
             
-            # Goldstein filter
-            phase_mlook_goldstein = self._sbas.goldstein(
-                phase_mlook, 
-                psize=self.config.goldstein_psize, 
-                alpha=self.config.goldstein_alpha
-            )
+            # Goldstein filter (matching turkey_insar_full.py)
+            phase_mlook_goldstein = self._sbas.goldstein(phase_mlook, corr_mlook, self.config.goldstein_psize)
             
             self._report_progress(ProcessingStep.COMPUTE_INTERFEROGRAM, 85, "Computing final interferogram...")
             
-            # Interferogram
+            # Interferogram (matching turkey_insar_full.py)
             intf_mlook = self._sbas.interferogram(phase_mlook_goldstein)
             
-            # Store results
-            self._corr = corr_mlook[0].compute() if hasattr(corr_mlook[0], 'compute') else corr_mlook[0]
-            self._intf = intf_mlook[0].compute() if hasattr(intf_mlook[0], 'compute') else intf_mlook[0]
+            # Compute (using synchronous scheduler, matching turkey_insar_full.py)
+            self._log("  Computing correlation and interferogram...")
+            self._corr = corr_mlook[0].compute()
+            self._log("    Correlation computed")
+            self._intf = intf_mlook[0].compute()
+            self._log("    Interferogram computed")
+            
+            # Geocode to geographic coordinates (matching turkey_insar_full.py)
+            self._log("  Geocoding to geographic coordinates...")
+            self._intf_ll = self._sbas.ra2ll(self._intf).compute()
+            self._log("    Interferogram geocoded")
+            self._corr_ll = self._sbas.ra2ll(self._corr).compute()
+            self._log("    Correlation geocoded")
             
             self._complete_step(result)
             
