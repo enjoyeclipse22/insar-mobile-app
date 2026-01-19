@@ -536,8 +536,15 @@ export default function ProjectDetailScreen() {
           text: "开始处理",
           onPress: async () => {
             setIsStartingProcessing(true);
+            console.log("[handleStartProcessing] Starting processing for project:", project.name);
             try {
               // 调用真实的后端 API
+              console.log("[handleStartProcessing] Calling startRealProcessingMutation with:", {
+                projectId: parseInt(projectId),
+                projectName: project.name,
+                bounds: bounds!,
+              });
+              
               const result = await startRealProcessingMutation.mutateAsync({
                 projectId: parseInt(projectId),
                 projectName: project.name,
@@ -549,25 +556,38 @@ export default function ProjectDetailScreen() {
                 polarization: project.polarization || "VV+VH",
               });
               
+              console.log("[handleStartProcessing] API response:", result);
+              
+              if (!result || !result.taskId) {
+                throw new Error("后端未返回任务 ID");
+              }
+              
               const newTaskId = result.taskId;
+              console.log("[handleStartProcessing] Got taskId:", newTaskId);
               setTaskId(newTaskId);
               
               // 保存任务 ID
               await AsyncStorage.setItem(`task_${projectId}`, newTaskId);
+              console.log("[handleStartProcessing] Saved taskId to AsyncStorage");
               
               // 更新项目状态
               await updateProjectInStorage({ status: "processing", progress: 0 });
+              console.log("[handleStartProcessing] Updated project status to processing");
               
               // 重置步骤状态
               setSteps(DEFAULT_STEPS.map(s => ({ ...s, status: "pending", progress: 0 })));
               setProcessingLogs([]);
               
+              // 显示成功提示
+              Alert.alert("处理已启动", `任务 ID: ${newTaskId}\n\n您可以在此页面查看处理进度。`);
+              
               // 开始轮询状态
               startPolling(newTaskId);
               
             } catch (error: any) {
-              console.error("Start processing error:", error);
-              Alert.alert("错误", `启动处理失败: ${error.message || error}`);
+              console.error("[handleStartProcessing] Error:", error);
+              const errorMessage = error?.message || error?.toString() || "未知错误";
+              Alert.alert("启动处理失败", `错误详情: ${errorMessage}\n\n请检查网络连接并重试。`);
               await updateProjectInStorage({ status: "created", progress: 0 });
             } finally {
               setIsStartingProcessing(false);
