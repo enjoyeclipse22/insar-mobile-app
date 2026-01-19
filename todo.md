@@ -1107,3 +1107,22 @@
 - [x] 使用真实 ASF 凭据测试（kanezeng）
 - [x] 验证与 turkey_insar_full.py 的一致性
 - [x] 运行测试并验证结果（8/8 测试通过，耗时 140 秒）
+
+
+## 第 36 阶段：批处理脚本（环境搭建）
+
+### Ubuntu 服务器脚本
+- [x] 创建 setup_ubuntu.sh 安装脚本
+- [x] 包含系统依赖安装
+- [x] 包含 GMTSAR 编译安装
+- [x] 包含 PyGMTSAR 和 Python 依赖安装
+
+### Windows 脚本
+- [x] 创建 setup_windows.bat 安装脚本（WSL2 方式）
+- [x] 创建 setup_windows_conda.bat（Conda 方式）
+- [x] 包含依赖安装说明
+
+### 运行脚本
+- [x] 创建 run_insar.sh (Ubuntu)
+- [x] 创建 run_insar.bat (Windows)
+- [x] 创建使用说明文档 README.md
